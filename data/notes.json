@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8s1f3v",
+    "title": "Untitled",
+    "content": "PS C:\\Windows\\system32> Get-NetFirewallRule -DisplayName \"*Remote Desktop*\" | Select-Object DisplayName, Enabled, Profile\n\nDisplayName                         Enabled Profile\n-----------                         ------- -------\nRemote Desktop - User Mode (TCP-In)    True     Any\nRemote Desktop - User Mode (UDP-In)    True     Any\nRemote Desktop - Shadow (TCP-In)       True     Any\nRemote Desktop - (TCP-WS-In)           True     Any\nRemote Desktop - (TCP-WSS-In)          True     Any",
+    "createdAt": "2026-08-25T14:45:22.747Z"
+  },
+  {
     "id": "mt8rzdbt",
     "title": "Untitled",
     "content": "Get-NetFirewallRule -DisplayName \"*Remote Desktop*\" | Select-Object DisplayName, Enabled, Profile",
