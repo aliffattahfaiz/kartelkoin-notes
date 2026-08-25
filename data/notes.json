@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8rzdbt",
+    "title": "Untitled",
+    "content": "Get-NetFirewallRule -DisplayName \"*Remote Desktop*\" | Select-Object DisplayName, Enabled, Profile",
+    "createdAt": "2026-08-25T14:43:47.129Z"
+  },
+  {
     "id": "mt8rz8rp",
     "title": "Untitled",
     "content": "Enable-NetFirewallRule -DisplayName \"Remote Desktop - (TCP-WSS-In)\"",
