@@ -93,7 +93,21 @@ function createNoteCard(note) {
       article.classList.add('expanded');
     });
   }
-  article.querySelector('.copy-btn').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); copyNote(note); });
+  article.querySelector('.copy-btn').addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    copyNote(note).then((ok) => {
+      if (ok) {
+        // Highlight the card briefly instead of showing a toast
+        article.classList.add('copied-flash');
+        const btn = article.querySelector('.copy-btn');
+        btn.classList.add('copied');
+        setTimeout(() => {
+          article.classList.remove('copied-flash');
+          btn.classList.remove('copied');
+        }, 1200);
+      }
+    });
+  });
   article.querySelector('.delete-btn').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); deleteNote(note); });
 
   return article;
@@ -262,10 +276,11 @@ async function saveCurrent() {
 async function copyNote(note) {
   try {
     await navigator.clipboard.writeText(note.content);
-    toast('Body text copied to clipboard');
+    return true;
   } catch (err) {
     console.error('Copy error:', err);
     showError('Failed to copy note');
+    return false;
   }
 }
 
