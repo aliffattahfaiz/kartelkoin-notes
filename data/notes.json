@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8ql0ty",
+    "title": "f",
+    "content": "v",
+    "createdAt": "2026-08-25T14:04:38.134Z"
+  },
+  {
     "id": "mt8qkrwj",
     "title": "error",
     "content": "PS C:\\Windows\\system32> et-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0\n>> Enable-NetFirewallRule -DisplayGroup \"Remote Desktop\"\n>> Restart-Service TermService -Force\n>> netstat -an | findstr 3389\net-ItemProperty : The term 'et-ItemProperty' is not recognized as the name of a cmdlet, function, script file, or\noperable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try\nagain.\nAt line:1 char:1\n+ et-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Termina ...\n+ ~~~~~~~~~~~~~~~\n    + CategoryInfo          : ObjectNotFound: (et-ItemProperty:String) [], CommandNotFoundException\n    + FullyQualifiedErrorId : CommandNotFoundException",
