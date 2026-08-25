@@ -1,9 +1,10 @@
 [
   {
     "id": "mt8ri1qd",
-    "title": "Save-mode test",
-    "content": "Created via POST, will be edited via PATCH.",
-    "createdAt": "2026-08-25T14:30:18.949Z"
+    "title": "Save-mode test edited",
+    "content": "PATCH save worked.",
+    "createdAt": "2026-08-25T14:30:18.949Z",
+    "updatedAt": "2026-08-25T14:30:22.148Z"
   },
   {
     "id": "mt8rckbu",
