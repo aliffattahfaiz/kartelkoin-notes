@@ -22,13 +22,21 @@ function validateNote(title, content) {
 }
 
 async function fetchNotes() {
-  const response = await fetch(`${RAW_NOTES_URL}?t=${Date.now()}`, {
-    headers: { 'Cache-Control': 'no-cache' }
-  });
+  const response = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'kartelkoin-notes'
+      }
+    }
+  );
   if (!response.ok) {
     throw new Error(`Failed to fetch notes: ${response.status}`);
   }
-  return response.json();
+  const meta = await response.json();
+  return JSON.parse(Buffer.from(meta.content, 'base64').toString('utf8'));
 }
 
 async function writeAndPushNotes(notes) {
