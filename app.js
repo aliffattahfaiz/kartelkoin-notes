@@ -206,9 +206,8 @@ async function postNote(title, content) {
 }
 
 async function copyNote(note) {
-  const text = `${note.title}\n\n${note.content}`;
   try {
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(note.content);
     showError('Note copied to clipboard'); // reuse banner as toast
   } catch (err) {
     console.error('Copy error:', err);
