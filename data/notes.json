@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8r0466",
+    "title": "Bugfix test",
+    "content": "This note should appear instantly after posting.",
+    "createdAt": "2026-08-25T14:16:22.302Z"
+  },
+  {
     "id": "mt8qzof2",
     "title": "Untitled",
     "content": "Enable-NetFirewallRule -DisplayGroup \"Remote Desktop\" -Profile Any",
