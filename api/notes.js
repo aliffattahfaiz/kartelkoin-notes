@@ -1,9 +1,18 @@
 const GITHUB_REPO = process.env.GITHUB_REPO;
-const RAW_NOTES_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/data/notes.json`;
+const GH_API = `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`;
+
+function ghHeaders(extra = {}) {
+  return {
+    Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'kartelkoin-notes',
+    ...extra
+  };
+}
 
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Cache-Control', 'no-store');
 }
@@ -22,16 +31,7 @@ function validateNote(title, content) {
 }
 
 async function fetchNotes() {
-  const response = await fetch(
-    `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'kartelkoin-notes'
-      }
-    }
-  );
+  const response = await fetch(GH_API, { headers: ghHeaders() });
   if (!response.ok) {
     throw new Error(`Failed to fetch notes: ${response.status}`);
   }
@@ -39,42 +39,29 @@ async function fetchNotes() {
   return JSON.parse(Buffer.from(meta.content, 'base64').toString('utf8'));
 }
 
-async function writeAndPushNotes(notes) {
-  // Get current file SHA so we can update it
-  const metaRes = await fetch(
-    `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'kartelkoin-notes'
-      }
-    }
-  );
+// Reads current notes, lets mutator produce the new array, commits it.
+async function mutateNotes(mutator) {
+  const metaRes = await fetch(GH_API, { headers: ghHeaders() });
   if (!metaRes.ok) throw new Error(`Failed to read file meta: ${metaRes.status}`);
   const meta = await metaRes.json();
+  const notes = JSON.parse(Buffer.from(meta.content, 'base64').toString('utf8'));
 
-  const putRes = await fetch(
-    `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`,
-    {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'kartelkoin-notes'
-      },
-      body: JSON.stringify({
-        message: `Add note ${notes[notes.length - 1].id}`,
-        content: Buffer.from(JSON.stringify(notes, null, 2)).toString('base64'),
-        sha: meta.sha
-      })
-    }
-  );
+  const result = mutator(notes);
+
+  const putRes = await fetch(GH_API, {
+    method: 'PUT',
+    headers: ghHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      message: `KartelKoin: ${mutator.commitMessage}`,
+      content: Buffer.from(JSON.stringify(notes, null, 2)).toString('base64'),
+      sha: meta.sha
+    })
+  });
   if (!putRes.ok) {
     const t = await putRes.text();
     throw new Error(`Failed to write notes: ${putRes.status} ${t}`);
   }
+  return result;
 }
 
 module.exports = async (req, res) => {
@@ -106,23 +93,77 @@ module.exports = async (req, res) => {
         return res.status(400).json({ error: validation.error });
       }
 
-      const notes = await fetchNotes();
       const newNote = {
         id: Date.now().toString(36),
         title: title?.trim() || 'Untitled',
         content: content.trim(),
         createdAt: new Date().toISOString()
       };
-      notes.unshift(newNote);
-      writeAndPushNotes(notes);
 
-      return res.status(200).json({ ok: true });
+      // Return the note itself so the client can render it immediately
+      // without waiting for GitHub to reflect the commit.
+      await mutateNotes((notes) => {
+        notes.unshift(newNote);
+        return { commitMessage: `Add note ${newNote.id}` };
+      });
+
+      return res.status(200).json({ ok: true, note: newNote });
     } catch (err) {
       console.error('POST /api/notes error:', err);
       return res.status(500).json({ error: 'Failed to save note' });
     }
   }
 
-  res.setHeader('Allow', 'GET, POST, OPTIONS');
+  if (req.method === 'PATCH') {
+    try {
+      const { id, title, content } = req.body || {};
+      if (!id) return res.status(400).json({ error: 'Note id is required' });
+      const validation = validateNote(title, content);
+      if (!validation.valid) {
+        return res.status(400).json({ error: validation.error });
+      }
+
+      let updated = null;
+      await mutateNotes((notes) => {
+        const idx = notes.findIndex(n => n.id === id);
+        if (idx === -1) throw Object.assign(new Error('Note not found'), { statusCode: 404 });
+        notes[idx] = { ...notes[idx], title: title?.trim() || 'Untitled', content: content.trim(), updatedAt: new Date().toISOString() };
+        updated = notes[idx];
+        return { commitMessage: `Edit note ${id}` };
+      });
+
+      return res.status(200).json({ ok: true, note: updated });
+    } catch (err) {
+      console.error('PATCH /api/notes error:', err);
+      if (err.statusCode === 404) return res.status(404).json({ error: 'Note not found' });
+      return res.status(500).json({ error: 'Failed to edit note' });
+    }
+  }
+
+  if (req.method === 'DELETE') {
+    try {
+      const { id } = req.body || {};
+      if (!id) return res.status(400).json({ error: 'Note id is required' });
+
+      let existed = false;
+      await mutateNotes((notes) => {
+        const idx = notes.findIndex(n => n.id === id);
+        if (idx !== -1) {
+          notes.splice(idx, 1);
+          existed = true;
+        }
+        return { commitMessage: `Delete note ${id}` };
+      });
+
+      if (!existed) return res.status(404).json({ error: 'Note not found' });
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error('DELETE /api/notes error:', err);
+      if (err.statusCode === 404) return res.status(404).json({ error: 'Note not found' });
+      return res.status(500).json({ error: 'Failed to delete note' });
+    }
+  }
+
+  res.setHeader('Allow', 'GET, POST, PATCH, DELETE, OPTIONS');
   return res.status(405).json({ error: 'Method not allowed' });
 };

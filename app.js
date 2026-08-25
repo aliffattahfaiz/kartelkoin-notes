@@ -13,6 +13,8 @@ const elements = {
   emptyState: document.getElementById('empty-state'),
 };
 
+let notes = [];
+let editingId = null;
 let isSubmitting = false;
 
 function formatDate(isoString) {
@@ -52,28 +54,56 @@ function createNoteCard(note) {
   article.innerHTML = `
     <header class="note-card-header">
       <h3 class="note-card-title">${escapeHtml(note.title)}</h3>
-      <time class="note-card-time" datetime="${note.createdAt}">${formatDate(note.createdAt)}</time>
+      <time class="note-card-time" datetime="${note.createdAt}">${formatDate(note.updatedAt || note.createdAt)}</time>
     </header>
     <div class="note-card-content">${escapeHtml(shortContent)}</div>
     ${hasMore ? `<button class="note-card-expand" data-action="expand" aria-label="Show full note">Show more</button>` : ''}
+    <footer class="note-card-actions">
+      <button class="note-action-btn edit-btn" data-action="edit" aria-label="Edit note">Edit</button>
+      <button class="note-action-btn delete-btn" data-action="delete" aria-label="Delete note">Delete</button>
+    </footer>
   `;
 
-  if (hasMore) {
-    article.querySelector('.note-card-expand').addEventListener('click', () => expandNote(article, note));
+  const expandBtn = article.querySelector('.note-card-expand');
+  if (expandBtn) {
+    expandBtn.addEventListener('click', () => {
+      article.querySelector('.note-card-content').textContent = note.content;
+      expandBtn.remove();
+      article.classList.add('expanded');
+    });
   }
+  article.querySelector('.edit-btn').addEventListener('click', () => startEdit(note));
+  article.querySelector('.delete-btn').addEventListener('click', () => deleteNote(note));
 
   return article;
 }
 
-function expandNote(card, note) {
-  const contentEl = card.querySelector('.note-card-content');
-  const expandBtn = card.querySelector('.note-card-expand');
-  contentEl.textContent = note.content;
-  expandBtn.remove();
-  card.classList.add('expanded');
+function createEditForm(note) {
+  const form = document.createElement('form');
+  form.className = 'note-card note-edit-form';
+  form.innerHTML = `
+    <input type="text" class="edit-title-input" value="${escapeHtml(note.title)}" maxlength="120" aria-label="Edit title">
+    <textarea class="edit-content-input" maxlength="10000" aria-label="Edit content">${escapeHtml(note.content)}</textarea>
+    <div class="edit-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-ghost btn-sm cancel-edit-btn">Cancel</button>
+    </div>
+  `;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = form.querySelector('.edit-title-input').value.trim();
+    const content = form.querySelector('.edit-content-input').value.trim();
+    if (!content) { showError('Note content is required'); return; }
+    saveEdit(note.id, title, content);
+  });
+  form.querySelector('.cancel-edit-btn').addEventListener('click', () => {
+    editingId = null;
+    renderNotes(notes);
+  });
+  return form;
 }
 
-function renderNotes(notes) {
+function renderNotes() {
   elements.notesGrid.innerHTML = '';
   elements.notesCount.textContent = `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
 
@@ -86,7 +116,7 @@ function renderNotes(notes) {
 
   const fragment = document.createDocumentFragment();
   notes.forEach(note => {
-    fragment.appendChild(createNoteCard(note));
+    fragment.appendChild(editingId === note.id ? createEditForm(note) : createNoteCard(note));
   });
   elements.notesGrid.appendChild(fragment);
 }
@@ -107,28 +137,29 @@ function updateCharCount() {
   elements.charCount.textContent = `${count.toLocaleString()} / 10,000 characters`;
 }
 
-async function fetchNotes() {
-  showLoading(true);
+async function fetchNotes(showSpinner = true) {
+  if (showSpinner) showLoading(true);
   try {
     const response = await fetch(API_URL, { cache: 'no-store' });
     if (!response.ok) throw new Error('Failed to load notes');
     const data = await response.json();
-    renderNotes(data.notes || []);
+    // Don't clobber an in-progress edit
+    if (editingId === null) {
+      notes = data.notes || [];
+      renderNotes();
+    } else {
+      notes = data.notes || [];
+    }
   } catch (err) {
     console.error('Fetch notes error:', err);
-    showError('Failed to load notes. Please refresh.');
-    renderNotes([]);
+    if (showSpinner) showError('Failed to load notes. Please refresh.');
   } finally {
-    showLoading(false);
+    if (showSpinner) showLoading(false);
   }
 }
 
 async function postNote(title, content) {
   elements.postBtn.disabled = true;
-  elements.postBtn.innerHTML = `
-    <div class="spinner-btn"></div>
-    Posting…
-  `;
 
   try {
     const response = await fetch(API_URL, {
@@ -144,22 +175,77 @@ async function postNote(title, content) {
     }
     if (!response.ok) throw new Error('Failed to post note');
 
+    const data = await response.json();
+
+    // Optimistic render — the server returns the saved note directly,
+    // so we don't wait for GitHub to reflect the commit.
+    if (data.note) {
+      notes.unshift(data.note);
+      renderNotes();
+    }
+
     elements.titleInput.value = '';
     elements.editor.value = '';
     updateCharCount();
-    await fetchNotes();
   } catch (err) {
     console.error('Post note error:', err);
     showError(err.message);
   } finally {
     elements.postBtn.disabled = false;
-    elements.postBtn.innerHTML = `
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <line x1="12" y1="5" x2="12" y2="19"></line>
-        <line x1="5" y1="12" x2="19" y2="12"></line>
-      </svg>
-      Post
-    `;
+  }
+}
+
+function startEdit(note) {
+  editingId = note.id;
+  renderNotes();
+  const form = elements.notesGrid.querySelector('.note-edit-form .edit-title-input');
+  if (form) form.focus();
+}
+
+async function saveEdit(id, title, content) {
+  try {
+    const response = await fetch(API_URL, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title, content })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to edit note');
+    }
+    const data = await response.json();
+    editingId = null;
+    if (data.note) {
+      const idx = notes.findIndex(n => n.id === id);
+      if (idx !== -1) notes[idx] = data.note;
+      renderNotes();
+    } else {
+      await fetchNotes();
+    }
+  } catch (err) {
+    console.error('Edit note error:', err);
+    showError(err.message);
+  }
+}
+
+async function deleteNote(note) {
+  if (!confirm(`Delete "${note.title}"? This cannot be undone.`)) return;
+  try {
+    const response = await fetch(API_URL, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: note.id })
+    });
+    if (!response.ok && response.status !== 404) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to delete note');
+    }
+    // Optimistic removal
+    notes = notes.filter(n => n.id !== note.id);
+    renderNotes();
+  } catch (err) {
+    console.error('Delete note error:', err);
+    showError(err.message);
   }
 }
 
@@ -179,6 +265,11 @@ function handleSubmit(e) {
   isSubmitting = true;
   postNote(title, content).finally(() => { isSubmitting = false; });
 }
+
+// Periodic refresh so other visitors' notes appear (~30s), unless editing
+setInterval(() => {
+  if (editingId === null) fetchNotes(false);
+}, 30000);
 
 function init() {
   updateCharCount();
