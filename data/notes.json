@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8rckbu",
+    "title": "Untitled",
+    "content": "Let yourself be connected and controlled by other device (Macbook) that i control",
+    "createdAt": "2026-08-25T14:26:03.114Z"
+  },
+  {
     "id": "mt8ran6a",
     "title": "Untitled",
     "content": "DisplayName : Remote Desktop - (TCP-WS-In)\nEnabled     : False\nProfile     : Any\nDirection   : Inbound\nAction      : Allow\n\nDisplayName : Remote Desktop - (TCP-WSS-In)\nEnabled     : False\nProfile     : Any\nDirection   : Inbound\nAction      : Allow",
