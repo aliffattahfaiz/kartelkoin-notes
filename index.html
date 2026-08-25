@@ -4,12 +4,30 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>KartelKoin Notes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="app-container">
     <header class="header">
-      <h1 class="logo">KartelKoin Notes</h1>
+      <h1 class="logo">
+        <span class="logo-mark" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="14" cy="14" r="13.5" stroke="url(#coinGradient)" stroke-width="2.5"/>
+            <text x="14" y="19" text-anchor="middle" font-family="Archivo Black, sans-serif" font-size="14" font-weight="800" fill="url(#coinGradient)">K</text>
+            <defs>
+              <linearGradient id="coinGradient" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#F5B800"/>
+                <stop offset="50%" stop-color="#FFD700"/>
+                <stop offset="100%" stop-color="#B8860B"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </span>
+        KartelKoin Notes
+      </h1>
     </header>
 
     <main class="main-content">
