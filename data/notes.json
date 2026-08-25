@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8qmyd0",
+    "title": "Copas",
+    "content": "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0\nEnable-NetFirewallRule -DisplayGroup \"Remote Desktop\"\nRestart-Service TermService -Force\nnetstat -an | findstr 3389",
+    "createdAt": "2026-08-25T14:06:08.244Z"
+  },
+  {
     "id": "mt8ql0ty",
     "title": "f",
     "content": "v",
