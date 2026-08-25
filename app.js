@@ -76,8 +76,13 @@ function createNoteCard(note) {
     <div class="note-card-open-hint">Click to open & edit</div>
   `;
 
-  // Clicking anywhere on the card opens it in the main editor
-  article.addEventListener('click', () => openNote(note.id));
+  // Clicking anywhere on the card opens it in the main editor,
+  // EXCEPT when clicking a tool icon (copy/delete) or expand
+  article.addEventListener('click', (e) => {
+    if (e.target.closest('.note-icon-btn')) return;
+    if (e.target.closest('.note-card-expand')) return;
+    openNote(note.id);
+  });
 
   const expandBtn = article.querySelector('.note-card-expand');
   if (expandBtn) {
@@ -88,8 +93,8 @@ function createNoteCard(note) {
       article.classList.add('expanded');
     });
   }
-  article.querySelector('.copy-btn').addEventListener('click', (e) => { e.stopPropagation(); copyNote(note); });
-  article.querySelector('.delete-btn').addEventListener('click', (e) => { e.stopPropagation(); deleteNote(note); });
+  article.querySelector('.copy-btn').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); copyNote(note); });
+  article.querySelector('.delete-btn').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); deleteNote(note); });
 
   return article;
 }
