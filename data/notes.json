@@ -2,8 +2,9 @@
   {
     "id": "mt8suqcq",
     "title": "Untitled",
-    "content": "Install tailscale and run it",
-    "createdAt": "2026-08-25T15:08:10.346Z"
+    "content": "So this is the result of running nc -zv 192.168.18.26 3389 on macbook trying to connect this PC. So that ip and port is this pc actually.",
+    "createdAt": "2026-08-25T15:08:10.346Z",
+    "updatedAt": "2026-08-25T15:11:29.784Z"
   },
   {
     "id": "mt8sqewg",
