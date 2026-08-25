@@ -16,6 +16,7 @@ const elements = {
 };
 
 let notes = [];
+let lastRenderedSnapshot = null; // JSON snapshot of last rendered list — skip re-render if unchanged
 let currentId = null;      // id of the note open in the editor (null = new draft)
 let lastRemoteVersion = null; // { id, updatedAt } of the open note as last seen remotely
 let isSubmitting = false;
@@ -94,6 +95,11 @@ function createNoteCard(note) {
 }
 
 function renderNotes() {
+  // Skip DOM rebuild when nothing changed — prevents flicker from polling
+  const snapshot = JSON.stringify([notes, currentId]);
+  if (snapshot === lastRenderedSnapshot) return;
+  lastRenderedSnapshot = snapshot;
+
   elements.notesGrid.innerHTML = '';
   elements.notesCount.textContent = `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
 
