@@ -1,9 +1,10 @@
 [
   {
     "id": "mt8r0466",
-    "title": "Bugfix test",
-    "content": "This note should appear instantly after posting.",
-    "createdAt": "2026-08-25T14:16:22.302Z"
+    "title": "Edited title",
+    "content": "Edited content works.",
+    "createdAt": "2026-08-25T14:16:22.302Z",
+    "updatedAt": "2026-08-25T14:16:24.662Z"
   },
   {
     "id": "mt8qzof2",
