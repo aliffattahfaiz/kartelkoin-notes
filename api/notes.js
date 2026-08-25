@@ -1,7 +1,3 @@
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-
 const GITHUB_REPO = process.env.GITHUB_REPO;
 const RAW_NOTES_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/data/notes.json`;
 
@@ -35,33 +31,42 @@ async function fetchNotes() {
   return response.json();
 }
 
-function writeAndPushNotes(notes) {
-  const tmpDir = '/tmp/notes-repo';
-  const keyPath = '/tmp/deploy-key';
+async function writeAndPushNotes(notes) {
+  // Get current file SHA so we can update it
+  const metaRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'kartelkoin-notes'
+      }
+    }
+  );
+  if (!metaRes.ok) throw new Error(`Failed to read file meta: ${metaRes.status}`);
+  const meta = await metaRes.json();
 
-  fs.writeFileSync(keyPath, process.env.GIT_SSH_KEY.replace(/\\n/g, '\n'), { mode: 0o600 });
-
-  if (fs.existsSync(tmpDir)) {
-    execSync(`rm -rf ${tmpDir}`, { stdio: 'ignore' });
+  const putRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'kartelkoin-notes'
+      },
+      body: JSON.stringify({
+        message: `Add note ${notes[notes.length - 1].id}`,
+        content: Buffer.from(JSON.stringify(notes, null, 2)).toString('base64'),
+        sha: meta.sha
+      })
+    }
+  );
+  if (!putRes.ok) {
+    const t = await putRes.text();
+    throw new Error(`Failed to write notes: ${putRes.status} ${t}`);
   }
-
-  execSync(`git clone git@github.com:${GITHUB_REPO}.git ${tmpDir}`, {
-    env: { ...process.env, GIT_SSH_COMMAND: `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null` },
-    stdio: 'inherit'
-  });
-
-  const notesPath = path.join(tmpDir, 'data', 'notes.json');
-  fs.writeFileSync(notesPath, JSON.stringify(notes, null, 2));
-
-  execSync('git config user.name "vercel-bot"', { cwd: tmpDir, stdio: 'ignore' });
-  execSync('git config user.email "vercel-bot@kartelkoin.xyz"', { cwd: tmpDir, stdio: 'ignore' });
-  execSync('git add data/notes.json', { cwd: tmpDir, stdio: 'ignore' });
-  execSync(`git commit -m "Add note ${notes[notes.length - 1].id}"`, { cwd: tmpDir, stdio: 'ignore' });
-  execSync('git push origin main', {
-    cwd: tmpDir,
-    env: { ...process.env, GIT_SSH_COMMAND: `ssh -i ${keyPath} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null` },
-    stdio: 'inherit'
-  });
 }
 
 module.exports = async (req, res) => {
