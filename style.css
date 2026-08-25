@@ -898,3 +898,38 @@ body {
   width: 15px;
   height: 15px;
 }
+
+/* ---------- Workspace / save-mode additions ---------- */
+.composer-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-sm {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+.note-card {
+  cursor: pointer;
+}
+
+.note-card-open-hint {
+  margin-top: auto;
+  padding-top: 0.6rem;
+  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  color: rgba(245, 184, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.note-card:hover .note-card-open-hint {
+  opacity: 1;
+}
+
+.note-card.current-note {
+  border-color: var(--accent, #F5B800);
+  box-shadow: 0 0 0 1px var(--accent, #F5B800), 0 0 18px rgba(245, 184, 0, 0.18);
+}
