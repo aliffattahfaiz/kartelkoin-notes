@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8rz8rp",
+    "title": "Untitled",
+    "content": "Enable-NetFirewallRule -DisplayName \"Remote Desktop - (TCP-WSS-In)\"",
+    "createdAt": "2026-08-25T14:43:41.221Z"
+  },
+  {
     "id": "mt8rz31l",
     "title": "Untitled",
     "content": "Enable-NetFirewallRule -DisplayName \"Remote Desktop - (TCP-WS-In)\"",
