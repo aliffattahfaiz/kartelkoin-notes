@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8qxqia",
+    "title": "Untitled",
+    "content": "Set-NetConnectionProfile -Name \"Network\" -NetworkCategory Private",
+    "createdAt": "2026-08-25T14:14:31.282Z"
+  },
+  {
     "id": "mt8que09",
     "title": "Test",
     "content": "# Check network profile (should be Private, not Public)\nGet-NetConnectionProfile\n\n# If Public, change to Private:\nSet-NetConnectionProfile -Name \"Ethernet\" -NetworkCategory Private\n# (replace \"Ethernet\" with the Name shown above)\n\n# Verify firewall rules are enabled\nGet-NetFirewallRule -DisplayGroup \"Remote Desktop\" | Select-Object DisplayName, Enabled, Profile\n\n# Force enable for all profiles\nEnable-NetFirewallRule -DisplayGroup \"Remote Desktop\" -Profile Any\n\n# Quick test from another device on LAN (or from this Mac):\n# nc -zv 192.168.18.26 3389",
