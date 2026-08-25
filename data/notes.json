@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8ra836",
+    "title": "Untitled",
+    "content": "Get-NetFirewallRule -DisplayName \"*Remote Desktop*\" | Where-Object {$_.Enabled -eq 'False'} | Select-Object DisplayName, Enabled, Profile, Direction, Action",
+    "createdAt": "2026-08-25T14:24:13.938Z"
+  },
+  {
     "id": "mt8r9ojz",
     "title": "Untitled",
     "content": "TCP    0.0.0.0:3389           0.0.0.0:0              LISTENING\n  TCP    [::]:3389              [::]:0                 LISTENING\n  UDP    0.0.0.0:3389           *:*\n  UDP    [::]:3389              *:*",
