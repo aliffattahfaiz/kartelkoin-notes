@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8rz31l",
+    "title": "Untitled",
+    "content": "Enable-NetFirewallRule -DisplayName \"Remote Desktop - (TCP-WS-In)\"",
+    "createdAt": "2026-08-25T14:43:33.801Z"
+  },
+  {
     "id": "mt8rckbu",
     "title": "Untitled",
     "content": "Let yourself be connected and controlled by other device (Macbook) that i control",
