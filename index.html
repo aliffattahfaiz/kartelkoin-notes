@@ -61,7 +61,12 @@
       <section class="notes-board-section">
         <div class="notes-board-header">
           <h2>All Notes</h2>
-          <span id="notes-count" class="notes-count">0 notes</span>
+          <div class="board-header-actions">
+            <span id="notes-count" class="notes-count">0 notes</span>
+            <button type="button" id="copy-all-btn" class="note-icon-btn copy-all-btn" aria-label="Copy all notes" title="Copy all notes">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
         </div>
         <div id="notes-grid" class="notes-grid" role="list"></div>
         <div id="loading-state" class="loading-state hidden" aria-live="polite">

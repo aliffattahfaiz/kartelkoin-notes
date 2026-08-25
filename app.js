@@ -53,15 +53,24 @@ function createNoteCard(note) {
 
   article.innerHTML = `
     <header class="note-card-header">
-      <h3 class="note-card-title">${escapeHtml(note.title)}</h3>
-      <time class="note-card-time" datetime="${note.createdAt}">${formatDate(note.updatedAt || note.createdAt)}</time>
+      <div class="note-card-heading">
+        <h3 class="note-card-title">${escapeHtml(note.title)}</h3>
+        <div class="note-card-tools">
+          <time class="note-card-time" datetime="${note.createdAt}">${formatDate(note.updatedAt || note.createdAt)}</time>
+          <button class="note-icon-btn copy-btn" data-action="copy" aria-label="Copy note" title="Copy note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button class="note-icon-btn edit-btn" data-action="edit" aria-label="Edit note" title="Edit note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </button>
+          <button class="note-icon-btn delete-btn" data-action="delete" aria-label="Delete note" title="Delete note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+      </div>
     </header>
     <div class="note-card-content">${escapeHtml(shortContent)}</div>
     ${hasMore ? `<button class="note-card-expand" data-action="expand" aria-label="Show full note">Show more</button>` : ''}
-    <footer class="note-card-actions">
-      <button class="note-action-btn edit-btn" data-action="edit" aria-label="Edit note">Edit</button>
-      <button class="note-action-btn delete-btn" data-action="delete" aria-label="Delete note">Delete</button>
-    </footer>
   `;
 
   const expandBtn = article.querySelector('.note-card-expand');
@@ -72,6 +81,7 @@ function createNoteCard(note) {
       article.classList.add('expanded');
     });
   }
+  article.querySelector('.copy-btn').addEventListener('click', () => copyNote(note));
   article.querySelector('.edit-btn').addEventListener('click', () => startEdit(note));
   article.querySelector('.delete-btn').addEventListener('click', () => deleteNote(note));
 
@@ -195,6 +205,17 @@ async function postNote(title, content) {
   }
 }
 
+async function copyNote(note) {
+  const text = `${note.title}\n\n${note.content}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    showError('Note copied to clipboard'); // reuse banner as toast
+  } catch (err) {
+    console.error('Copy error:', err);
+    showError('Failed to copy note');
+  }
+}
+
 function startEdit(note) {
   editingId = note.id;
   renderNotes();
@@ -271,12 +292,31 @@ setInterval(() => {
   if (editingId === null) fetchNotes(false);
 }, 30000);
 
+async function copyAllNotes() {
+  if (notes.length === 0) {
+    showError('No notes to copy');
+    return;
+  }
+  const text = notes
+    .map(n => `## ${n.title}\n\n${n.content}`)
+    .join('\n\n---\n\n');
+  try {
+    await navigator.clipboard.writeText(`# KartelKoin Notes (${notes.length} notes)\n\n${text}`);
+    showError(`${notes.length} notes copied to clipboard`);
+  } catch (err) {
+    console.error('Copy all error:', err);
+    showError('Failed to copy notes');
+  }
+}
+
 function init() {
   updateCharCount();
   fetchNotes();
 
   elements.editor.addEventListener('input', updateCharCount);
   elements.composerForm.addEventListener('submit', handleSubmit);
+  const copyAllBtn = document.getElementById('copy-all-btn');
+  if (copyAllBtn) copyAllBtn.addEventListener('click', copyAllNotes);
 }
 
 if (document.readyState === 'loading') {
