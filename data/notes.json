@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8ran6a",
+    "title": "Untitled",
+    "content": "DisplayName : Remote Desktop - (TCP-WS-In)\nEnabled     : False\nProfile     : Any\nDirection   : Inbound\nAction      : Allow\n\nDisplayName : Remote Desktop - (TCP-WSS-In)\nEnabled     : False\nProfile     : Any\nDirection   : Inbound\nAction      : Allow",
+    "createdAt": "2026-08-25T14:24:33.490Z"
+  },
+  {
     "id": "mt8ra836",
     "title": "Untitled",
     "content": "Get-NetFirewallRule -DisplayName \"*Remote Desktop*\" | Where-Object {$_.Enabled -eq 'False'} | Select-Object DisplayName, Enabled, Profile, Direction, Action",
