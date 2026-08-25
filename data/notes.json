@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8skxio",
+    "title": "Untitled",
+    "content": "# Check if RDP listener is actually enabled\nGet-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name 'fEnableWinStation'\n# Should be 1",
+    "createdAt": "2026-08-25T15:00:33.072Z"
+  },
+  {
     "id": "mt8sh2p0",
     "title": "Untitled",
     "content": "So here is the thing, i want to make this PC as home server able to be connected or controlled via RDP and VNC. Please help set it up",
