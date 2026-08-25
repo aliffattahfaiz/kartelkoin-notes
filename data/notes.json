@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt984omm",
+    "title": "Untitled",
+    "content": "PS C:\\Windows\\system32> $key=\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDiFZRb6Lf2yWe+2Zy0bIKSUlXqV/lbS0qhnC5jkWcGC ubuntu@VM-0-3-ubuntu\"\n>> $dir=\"$env:USERPROFILE\\.ssh\"\n>> if(!(Test-Path $dir)){mkdir $dir}\n>> Add-Content -Path \"$dir\\authorized_keys\" -Value $key\n>> icacls \"$dir\\authorized_keys\" /inheritance:r /grant:r \"$env:USERNAME:(R)\"\nInvalid parameter \"(R)\"",
+    "createdAt": "2026-08-25T22:15:48.910Z"
+  },
+  {
     "id": "mt983pt4",
     "title": "Untitled",
     "content": "Keypair generated. Here's your one action — run this once on the M910S (PowerShell, as the user account) to authorize my key:\n\n$key=\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDiFZRb6Lf2yWe+2Zy0bIKSUlXqV/lbS0qhnC5jkWcGC ubuntu@VM-0-3-ubuntu\"\n$dir=\"$env:USERPROFILE\\.ssh\"\nif(!(Test-Path $dir)){mkdir $dir}\nAdd-Content -Path \"$dir\\authorized_keys\" -Value $key\nicacls \"$dir\\authorized_keys\" /inheritance:r /grant:r \"$env:USERNAME:(R)\"\n\n\nThat adds my public key to your user account's authorized_keys and locks permissions (Windows OpenSSH requires that). \n\nThen tell me and I'll SSH in from the VPS:\nssh user@100.113.7.12\n\n\nIf user isn't the exact SSH login name on the M910S, replace it — or just tell me the correct username and I'll adjust. Once I'm in, I'll diagnose the 5B model slowness (find how it's launched, check GPU/quant, fix it) and confirm control works.\n\nRun that PowerShell command on the M910S and say \"done\" (or give me the real username if it differs).",
