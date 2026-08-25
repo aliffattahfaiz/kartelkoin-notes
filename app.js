@@ -1,36 +1,19 @@
-const STORAGE_KEY = 'kartelkoin_notes';
-const DEBOUNCE_MS = 800;
-
-const state = {
-  notes: [],
-  currentNoteId: null,
-  isSharedNote: false,
-  saveTimeout: null,
-  urlUpdateTimeout: null,
-  isLoadingFromUrl: false,
-};
+const API_URL = '/api/notes';
 
 const elements = {
   titleInput: document.getElementById('note-title'),
   editor: document.getElementById('note-editor'),
   charCount: document.getElementById('char-count'),
-  urlIndicator: document.getElementById('url-indicator'),
-  copyLinkBtn: document.getElementById('copy-link-btn'),
-  newNoteBtn: document.getElementById('new-note-btn'),
-  saveSharedBtn: document.getElementById('save-shared-btn'),
-  clearHistoryBtn: document.getElementById('clear-history-btn'),
-  notesList: document.getElementById('notes-list'),
+  postBtn: document.getElementById('post-btn'),
+  composerForm: document.getElementById('composer-form'),
+  errorBanner: document.getElementById('error-banner'),
+  notesGrid: document.getElementById('notes-grid'),
+  notesCount: document.getElementById('notes-count'),
+  loadingState: document.getElementById('loading-state'),
   emptyState: document.getElementById('empty-state'),
-  sharedBanner: document.getElementById('shared-banner'),
 };
 
-function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
-}
-
-function getCurrentTimestamp() {
-  return new Date().toISOString();
-}
+let isSubmitting = false;
 
 function formatDate(isoString) {
   const date = new Date(isoString);
@@ -47,388 +30,162 @@ function formatDate(isoString) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function loadNotesFromStorage() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      state.notes = JSON.parse(stored);
-    }
-  } catch (e) {
-    console.error('Failed to load notes from localStorage:', e);
-    state.notes = [];
-  }
-}
-
-function saveNotesToStorage() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.notes));
-  } catch (e) {
-    console.error('Failed to save notes to localStorage:', e);
-  }
-}
-
-function encodeNote(title, content) {
-  const data = { t: title || 'Untitled', c: content || '', v: 1 };
-  const json = JSON.stringify(data);
-  return LZString.compressToEncodedURIComponent(json);
-}
-
-function decodeNote(hash) {
-  try {
-    const json = LZString.decompressFromEncodedURIComponent(hash);
-    if (!json) return null;
-    const data = JSON.parse(json);
-    if (data.v !== 1) return null;
-    return { title: data.t || 'Untitled', content: data.c || '' };
-  } catch (e) {
-    console.error('Failed to decode note from URL:', e);
-    return null;
-  }
-}
-
-function updateUrlIndicator(status) {
-  elements.urlIndicator.className = 'url-indicator ' + status;
-  if (status === 'synced') {
-    elements.urlIndicator.textContent = 'Link updated';
-  } else if (status === 'pending') {
-    elements.urlIndicator.textContent = 'Updating...';
-  } else {
-    elements.urlIndicator.textContent = '';
-  }
-}
-
-function updateUrlHash(title, content) {
-  const hash = encodeNote(title, content);
-  const newUrl = `${window.location.origin}${window.location.pathname}#${hash}`;
-  history.replaceState(null, '', newUrl);
-  updateUrlIndicator('synced');
-}
-
-function debouncedUpdateUrl(title, content) {
-  clearTimeout(state.urlUpdateTimeout);
-  updateUrlIndicator('pending');
-  state.urlUpdateTimeout = setTimeout(() => {
-    updateUrlHash(title, content);
-  }, DEBOUNCE_MS);
-}
-
-function updateCharCount() {
-  const text = elements.editor.value;
-  const count = text.length;
-  elements.charCount.textContent = `${count.toLocaleString()} character${count !== 1 ? 's' : ''}`;
-}
-
-function createNoteElement(note, isCurrent = false) {
-  const li = document.createElement('li');
-  li.className = `note-item${isCurrent ? ' current' : ''}`;
-  li.dataset.id = note.id;
-
-  li.innerHTML = `
-    <div class="note-item-header">
-      <span class="note-item-title" title="${escapeHtml(note.title)}">${escapeHtml(note.title)}</span>
-      <div class="note-item-meta">
-        <span>${formatDate(note.updatedAt)}</span>
-        <span>${(note.content.length / 1024).toFixed(1)} KB</span>
-      </div>
-    </div>
-    <div class="note-item-actions">
-      <button class="note-item-btn open-btn" data-action="open" aria-label="Open note">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-          <circle cx="12" cy="12" r="3"></circle>
-        </svg>
-        Open
-      </button>
-      <button class="note-item-btn delete-btn" data-action="delete" aria-label="Delete note">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <polyline points="3 6 5 6 21 6"></polyline>
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-        </svg>
-        Delete
-      </button>
-    </div>
-  `;
-
-  li.querySelector('.open-btn').addEventListener('click', () => openNote(note.id));
-  li.querySelector('.delete-btn').addEventListener('click', () => deleteNote(note.id));
-
-  return li;
-}
-
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
 }
 
-function renderNotesList() {
-  elements.notesList.innerHTML = '';
+function truncateText(text, maxLength = 300) {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength).trim() + '…';
+}
 
-  if (state.notes.length === 0) {
+function createNoteCard(note) {
+  const article = document.createElement('article');
+  article.className = 'note-card';
+  article.dataset.id = note.id;
+
+  const shortContent = truncateText(note.content);
+  const hasMore = note.content.length > 300;
+
+  article.innerHTML = `
+    <header class="note-card-header">
+      <h3 class="note-card-title">${escapeHtml(note.title)}</h3>
+      <time class="note-card-time" datetime="${note.createdAt}">${formatDate(note.createdAt)}</time>
+    </header>
+    <div class="note-card-content">${escapeHtml(shortContent)}</div>
+    ${hasMore ? `<button class="note-card-expand" data-action="expand" aria-label="Show full note">Show more</button>` : ''}
+  `;
+
+  if (hasMore) {
+    article.querySelector('.note-card-expand').addEventListener('click', () => expandNote(article, note));
+  }
+
+  return article;
+}
+
+function expandNote(card, note) {
+  const contentEl = card.querySelector('.note-card-content');
+  const expandBtn = card.querySelector('.note-card-expand');
+  contentEl.textContent = note.content;
+  expandBtn.remove();
+  card.classList.add('expanded');
+}
+
+function renderNotes(notes) {
+  elements.notesGrid.innerHTML = '';
+  elements.notesCount.textContent = `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
+
+  if (notes.length === 0) {
     elements.emptyState.classList.remove('hidden');
     return;
   }
 
   elements.emptyState.classList.add('hidden');
 
-  const sortedNotes = [...state.notes].sort((a, b) =>
-    new Date(b.updatedAt) - new Date(a.updatedAt)
-  );
-
-  sortedNotes.forEach(note => {
-    const isCurrent = note.id === state.currentNoteId && !state.isSharedNote;
-    const el = createNoteElement(note, isCurrent);
-    elements.notesList.appendChild(el);
+  const fragment = document.createDocumentFragment();
+  notes.forEach(note => {
+    fragment.appendChild(createNoteCard(note));
   });
+  elements.notesGrid.appendChild(fragment);
 }
 
-function setEditorContent(title, content, isShared = false) {
-  state.isLoadingFromUrl = true;
-  elements.titleInput.value = title;
-  elements.editor.value = content;
-  state.isLoadingFromUrl = false;
+function showLoading(show) {
+  elements.loadingState.classList.toggle('hidden', !show);
+  elements.notesGrid.classList.toggle('hidden', show);
+}
 
-  updateCharCount();
-  state.isSharedNote = isShared;
+function showError(message) {
+  elements.errorBanner.textContent = message;
+  elements.errorBanner.classList.remove('hidden');
+  setTimeout(() => elements.errorBanner.classList.add('hidden'), 5000);
+}
 
-  if (isShared) {
-    elements.sharedBanner.classList.remove('hidden');
-  } else {
-    elements.sharedBanner.classList.add('hidden');
+function updateCharCount() {
+  const count = elements.editor.value.length;
+  elements.charCount.textContent = `${count.toLocaleString()} / 10,000 characters`;
+}
+
+async function fetchNotes() {
+  showLoading(true);
+  try {
+    const response = await fetch(API_URL, { cache: 'no-store' });
+    if (!response.ok) throw new Error('Failed to load notes');
+    const data = await response.json();
+    renderNotes(data.notes || []);
+  } catch (err) {
+    console.error('Fetch notes error:', err);
+    showError('Failed to load notes. Please refresh.');
+    renderNotes([]);
+  } finally {
+    showLoading(false);
   }
 }
 
-function getEditorContent() {
-  return {
-    title: elements.titleInput.value.trim() || 'Untitled',
-    content: elements.editor.value
-  };
-}
+async function postNote(title, content) {
+  elements.postBtn.disabled = true;
+  elements.postBtn.innerHTML = `
+    <div class="spinner-btn"></div>
+    Posting…
+  `;
 
-function createNewNote() {
-  const { title, content } = getEditorContent();
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content })
+    });
 
-  if (content.trim() || title !== 'Untitled') {
-    const existingIndex = state.notes.findIndex(n => n.id === state.currentNoteId);
-    if (existingIndex >= 0) {
-      state.notes[existingIndex] = {
-        ...state.notes[existingIndex],
-        title,
-        content,
-        updatedAt: getCurrentTimestamp()
-      };
-    } else {
-      const newNote = {
-        id: generateId(),
-        title,
-        content,
-        createdAt: getCurrentTimestamp(),
-        updatedAt: getCurrentTimestamp()
-      };
-      state.notes.unshift(newNote);
-      state.currentNoteId = newNote.id;
+    if (response.status === 429) throw new Error('Rate limited. Please wait.');
+    if (response.status === 400) {
+      const data = await response.json();
+      throw new Error(data.error || 'Invalid note');
     }
-    saveNotesToStorage();
-    renderNotesList();
-  }
+    if (!response.ok) throw new Error('Failed to post note');
 
-  setEditorContent('Untitled', '');
-  state.currentNoteId = null;
-  state.isSharedNote = false;
-  history.replaceState(null, '', `${window.location.origin}${window.location.pathname}`);
-  updateUrlIndicator('');
-  elements.editor.focus();
-}
-
-function openNote(id) {
-  const note = state.notes.find(n => n.id === id);
-  if (!note) return;
-
-  setEditorContent(note.title, note.content);
-  state.currentNoteId = note.id;
-  state.isSharedNote = false;
-  elements.sharedBanner.classList.add('hidden');
-  debouncedUpdateUrl(note.title, note.content);
-  renderNotesList();
-  elements.editor.focus();
-}
-
-function deleteNote(id) {
-  if (!confirm('Delete this note? This cannot be undone.')) return;
-
-  state.notes = state.notes.filter(n => n.id !== id);
-  saveNotesToStorage();
-
-  if (state.currentNoteId === id) {
-    createNewNote();
-  } else {
-    renderNotesList();
-  }
-}
-
-function saveSharedNote() {
-  const { title, content } = getEditorContent();
-
-  const existingIndex = state.notes.findIndex(n => n.id === state.currentNoteId);
-  if (existingIndex >= 0 && !state.isSharedNote) {
-    state.notes[existingIndex] = {
-      ...state.notes[existingIndex],
-      title,
-      content,
-      updatedAt: getCurrentTimestamp()
-    };
-  } else {
-    const newNote = {
-      id: generateId(),
-      title,
-      content,
-      createdAt: getCurrentTimestamp(),
-      updatedAt: getCurrentTimestamp()
-    };
-    state.notes.unshift(newNote);
-    state.currentNoteId = newNote.id;
-  }
-
-  saveNotesToStorage();
-  state.isSharedNote = false;
-  elements.sharedBanner.classList.add('hidden');
-  renderNotesList();
-  debouncedUpdateUrl(title, content);
-}
-
-function clearAllNotes() {
-  if (state.notes.length === 0) return;
-  if (!confirm('Delete all saved notes? This cannot be undone.')) return;
-
-  state.notes = [];
-  saveNotesToStorage();
-  renderNotesList();
-
-  if (state.currentNoteId) {
-    createNewNote();
-  }
-}
-
-function copyShareLink() {
-  const { title, content } = getEditorContent();
-  const hash = encodeNote(title, content);
-  const url = `${window.location.origin}${window.location.pathname}#${hash}`;
-
-  navigator.clipboard.writeText(url).then(() => {
-    const originalText = elements.copyLinkBtn.innerHTML;
-    elements.copyLinkBtn.innerHTML = `
+    elements.titleInput.value = '';
+    elements.editor.value = '';
+    updateCharCount();
+    await fetchNotes();
+  } catch (err) {
+    console.error('Post note error:', err);
+    showError(err.message);
+  } finally {
+    elements.postBtn.disabled = false;
+    elements.postBtn.innerHTML = `
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <polyline points="20 6 9 17 4 12"></polyline>
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
       </svg>
-      Copied!
+      Post
     `;
-    elements.copyLinkBtn.classList.add('btn-secondary');
-    elements.copyLinkBtn.classList.remove('btn-primary');
-
-    setTimeout(() => {
-      elements.copyLinkBtn.innerHTML = originalText;
-      elements.copyLinkBtn.classList.add('btn-primary');
-      elements.copyLinkBtn.classList.remove('btn-secondary');
-    }, 2000);
-  }).catch(() => {
-    alert('Failed to copy link. Please try manually.');
-  });
-}
-
-function handleHashChange() {
-  const hash = window.location.hash.slice(1);
-  if (!hash) return;
-
-  const decoded = decodeNote(hash);
-  if (decoded) {
-    setEditorContent(decoded.title, decoded.content, true);
-    state.currentNoteId = null;
-    renderNotesList();
   }
 }
 
-function handleEditorInput() {
-  if (state.isLoadingFromUrl) return;
+function handleSubmit(e) {
+  e.preventDefault();
+  if (isSubmitting) return;
 
-  updateCharCount();
+  const title = elements.titleInput.value.trim();
+  const content = elements.editor.value.trim();
 
-  const { title, content } = getEditorContent();
-
-  clearTimeout(state.saveTimeout);
-  state.saveTimeout = setTimeout(() => {
-    if (state.currentNoteId && !state.isSharedNote) {
-      const noteIndex = state.notes.findIndex(n => n.id === state.currentNoteId);
-      if (noteIndex >= 0) {
-        state.notes[noteIndex] = {
-          ...state.notes[noteIndex],
-          title,
-          content,
-          updatedAt: getCurrentTimestamp()
-        };
-        saveNotesToStorage();
-        renderNotesList();
-      }
-    }
-    debouncedUpdateUrl(title, content);
-  }, DEBOUNCE_MS);
-}
-
-function handleTitleInput() {
-  if (state.isLoadingFromUrl) return;
-
-  const { title, content } = getEditorContent();
-  debouncedUpdateUrl(title, content);
-}
-
-function handleKeydown(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-    e.preventDefault();
-    if (state.isSharedNote) {
-      saveSharedNote();
-    } else if (state.currentNoteId) {
-      const { title, content } = getEditorContent();
-      const noteIndex = state.notes.findIndex(n => n.id === state.currentNoteId);
-      if (noteIndex >= 0) {
-        state.notes[noteIndex] = {
-          ...state.notes[noteIndex],
-          title,
-          content,
-          updatedAt: getCurrentTimestamp()
-        };
-        saveNotesToStorage();
-        renderNotesList();
-        debouncedUpdateUrl(title, content);
-      }
-    }
+  if (!content) {
+    showError('Note content is required');
+    elements.editor.focus();
+    return;
   }
 
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-    e.preventDefault();
-    createNewNote();
-  }
-
-  if (e.key === 'Escape') {
-    elements.editor.blur();
-    elements.titleInput.blur();
-  }
+  isSubmitting = true;
+  postNote(title, content).finally(() => { isSubmitting = false; });
 }
 
 function init() {
-  loadNotesFromStorage();
-  renderNotesList();
+  updateCharCount();
+  fetchNotes();
 
-  handleHashChange();
-
-  elements.editor.addEventListener('input', handleEditorInput);
-  elements.titleInput.addEventListener('input', handleTitleInput);
-  elements.copyLinkBtn.addEventListener('click', copyShareLink);
-  elements.newNoteBtn.addEventListener('click', createNewNote);
-  elements.saveSharedBtn.addEventListener('click', saveSharedNote);
-  elements.clearHistoryBtn.addEventListener('click', clearAllNotes);
-  document.addEventListener('keydown', handleKeydown);
-  window.addEventListener('hashchange', handleHashChange);
-
-  elements.editor.focus();
+  elements.editor.addEventListener('input', updateCharCount);
+  elements.composerForm.addEventListener('submit', handleSubmit);
 }
 
 if (document.readyState === 'loading') {
