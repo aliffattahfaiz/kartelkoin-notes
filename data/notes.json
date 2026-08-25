@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8qevxs",
+    "title": "Copast",
+    "content": "et-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0\nEnable-NetFirewallRule -DisplayGroup \"Remote Desktop\"\nRestart-Service TermService -Force\nnetstat -an | findstr 3389",
+    "createdAt": "2026-08-25T13:59:51.856Z"
+  },
+  {
     "id": "mt8qblai",
     "title": "Welcome to KartelKoin Notes",
     "content": "This board is shared - everyone who opens notes.kartelkoin.xyz sees all notes.",
