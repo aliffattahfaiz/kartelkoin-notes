@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8qzof2",
+    "title": "Untitled",
+    "content": "Enable-NetFirewallRule -DisplayGroup \"Remote Desktop\" -Profile Any",
+    "createdAt": "2026-08-25T14:16:01.886Z"
+  },
+  {
     "id": "mt8qxqia",
     "title": "Untitled",
     "content": "Set-NetConnectionProfile -Name \"Network\" -NetworkCategory Private",
