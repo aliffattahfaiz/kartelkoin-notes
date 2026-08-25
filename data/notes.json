@@ -1,5 +1,11 @@
 [
   {
+    "id": "mt8sqewg",
+    "title": "Untitled",
+    "content": "nc: connectx to 192.168.18.26 port 3389 (tcp) failed: Connection refused",
+    "createdAt": "2026-08-25T15:04:48.880Z"
+  },
+  {
     "id": "mt8skxio",
     "title": "Untitled",
     "content": "# Check if RDP listener is actually enabled\nGet-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name 'fEnableWinStation'\n# Should be 1",
