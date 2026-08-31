@@ -1,5 +1,11 @@
 [
   {
+    "id": "mtglaopr",
+    "title": "Untitled",
+    "content": "powershell -Command \"Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name 'fDenyTSConnections' -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'; Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name 'UserAuthentication' -Value 0\"",
+    "createdAt": "2026-08-31T01:58:47.199Z"
+  },
+  {
     "id": "mtbfudl9",
     "title": "Untitled",
     "content": "Email: camila.collins5318@partypinpai.com\nPassword: qw1122334455\n\nini yaa kaa, ada ban massal sebelumnya",
