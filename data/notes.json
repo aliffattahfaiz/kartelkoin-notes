@@ -2,8 +2,9 @@
   {
     "id": "mtsfvrsb",
     "title": "Untitled",
-    "content": "Get-Service sshd | Select-Object Status",
-    "createdAt": "2026-09-08T09:00:27.371Z"
+    "content": "Get-Content C:\\ProgramData\\ssh\\sshd_config | Select-String \"PasswordAuth\"",
+    "createdAt": "2026-09-08T09:00:27.371Z",
+    "updatedAt": "2026-09-08T09:03:04.593Z"
   },
   {
     "id": "mtsflhnn",
