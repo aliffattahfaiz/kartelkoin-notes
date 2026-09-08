@@ -1,5 +1,11 @@
 [
   {
+    "id": "mtshbhlf",
+    "title": "Untitled",
+    "content": "C:\\Users\\Ali>net user ali 7072\nSystem error 5 has occurred.\n\nAccess is denied.",
+    "createdAt": "2026-09-08T09:40:40.275Z"
+  },
+  {
     "id": "mtsfvrsb",
     "title": "Untitled",
     "content": "Get-Content C:\\ProgramData\\ssh\\sshd_config | Select-String \"PasswordAuth\"",
