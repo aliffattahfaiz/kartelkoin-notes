@@ -8,9 +8,9 @@
   {
     "id": "mtsfvrsb",
     "title": "Untitled",
-    "content": "Get-Content C:\\ProgramData\\ssh\\sshd_config | Select-String \"PasswordAuth\"",
+    "content": "net user ali 7072",
     "createdAt": "2026-09-08T09:00:27.371Z",
-    "updatedAt": "2026-09-08T09:03:04.593Z"
+    "updatedAt": "2026-09-08T09:41:24.347Z"
   },
   {
     "id": "mtsflhnn",
