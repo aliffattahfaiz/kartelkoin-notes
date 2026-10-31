@@ -2,8 +2,9 @@
   {
     "id": "mvw0nsbh",
     "title": "Untitled",
-    "content": "msiexec /i D:\\guest-agent\\qemu-ga-x86_64.msi /quiet /norestart",
-    "createdAt": "2026-10-31T06:24:49.949Z"
+    "content": "msiexec /i D:\\virtio-win-gt-x64.msi /quiet /norestart\nsfc /scannow\nDISM /Online /Cleanup-Image /RestoreHealth",
+    "createdAt": "2026-10-31T06:24:49.949Z",
+    "updatedAt": "2026-10-31T06:27:19.500Z"
   },
   {
     "id": "mvvxvc7p",
