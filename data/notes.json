@@ -1,5 +1,11 @@
 [
   {
+    "id": "mvvxtwro",
+    "title": "Untitled",
+    "content": "wevtutil qe System /q:\"*[System[(EventID=41 or EventID=1001 or EventID=6008)]]\" /f:text /c:10",
+    "createdAt": "2026-10-31T05:05:36.804Z"
+  },
+  {
     "id": "mvtfzr2p",
     "title": "Untitled",
     "content": "https://occipital-sundial-105.notion.site/Debloating-Windows-Guide-259d8028b33580d9b076ccfe0237f756",
