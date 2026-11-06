@@ -9,6 +9,8 @@ require('./test-env');
 const assert = require('node:assert/strict');
 const notesHandler = require('../api/notes');
 const sessionHandler = require('../api/session');
+const auth = require('../lib/auth');
+const { resetRateLimits } = require('../lib/session');
 const { del } = require('@vercel/blob');
 
 const BOARD_PATH = process.env.BOARD_BLOB_PATH;
@@ -285,12 +287,11 @@ check('a passphrase change needs the current passphrase', async () => {
 });
 
 check('a passphrase change refuses a short one, and writes nothing', async () => {
-  const auth = require('../lib/auth');
   const before = await auth.readAuth({ fresh: true });
 
   const res = await call(sessionHandler, {
     method: 'POST',
-    body: { action: 'change', current: process.env.BOARD_PASSPHRASE, next: '7072' },
+    body: { action: 'change', current: process.env.BOARD_PASSPHRASE, next: 'short' },
   });
   assert.equal(res.statusCode, 400);
   assert.match(res.json.error, /12 characters/);
@@ -344,10 +345,107 @@ check('changing the passphrase rotates the passphrase and the epoch', async () =
   token = /kk_session=([^;]+)/.exec(restored.getHeader('set-cookie'))[1];
 });
 
-check('the session route reports the minimum length', async () => {
+check('the session route reports the minimum length and the credential shape', async () => {
   const res = await call(sessionHandler, { method: 'GET' });
   assert.equal(res.statusCode, 200);
   assert.ok(Number(res.json.minLength) >= 8);
+  assert.ok(Number(res.json.pinMinLength) >= 4);
+  assert.ok(Number(res.json.pinMaxLength) <= 12);
+  assert.equal(res.json.kind, 'passphrase');
+});
+
+check('a PIN can replace the passphrase', async () => {
+  resetRateLimits();
+  await auth.clearAttempts();
+
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: process.env.BOARD_PASSPHRASE, next: '7072', kind: 'pin' },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.json.kind, 'pin');
+  token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+
+  const status = await call(sessionHandler, { method: 'GET' });
+  assert.equal(status.json.kind, 'pin', 'the gate now asks for a PIN');
+});
+
+check('the PIN signs in, and the old passphrase does not', async () => {
+  resetRateLimits();
+  const typed = await call(sessionHandler, { method: 'POST', body: { pin: '7072' } });
+  assert.equal(typed.statusCode, 200);
+  assert.match(typed.getHeader('set-cookie'), /HttpOnly/);
+  token = /kk_session=([^;]+)/.exec(typed.getHeader('set-cookie'))[1];
+
+  const old = await call(sessionHandler, {
+    method: 'POST',
+    body: { passphrase: process.env.BOARD_PASSPHRASE },
+  });
+  assert.equal(old.statusCode, 401);
+  assert.equal(old.json.error, 'Wrong PIN');
+});
+
+check('a PIN outside four to twelve digits is refused', async () => {
+  for (const next of ['123', '1234567890123', 'abcd']) {
+    resetRateLimits();
+    const res = await call(sessionHandler, {
+      method: 'POST',
+      body: { action: 'change', current: '7072', next, kind: 'pin' },
+    });
+    assert.equal(res.statusCode, 400, `${next} must be refused`);
+    assert.match(res.json.error, /PIN/);
+  }
+
+  const still = await call(sessionHandler, { method: 'POST', body: { pin: '7072' } });
+  assert.equal(still.statusCode, 200, 'a refused change leaves the PIN alone');
+});
+
+check('a PIN can go back to a passphrase', async () => {
+  resetRateLimits();
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: {
+      action: 'change',
+      current: '7072',
+      next: process.env.BOARD_PASSPHRASE,
+      kind: 'passphrase',
+    },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.json.kind, 'passphrase');
+  token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+});
+
+check('five wrong attempts lock the gate, and the right one waits too', async () => {
+  resetRateLimits();
+  await auth.clearAttempts();
+
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    resetRateLimits();
+    const res = await call(sessionHandler, { method: 'POST', body: { passphrase: `guess-${attempt}` } });
+    assert.equal(res.statusCode, 401, `attempt ${attempt} is a plain rejection`);
+  }
+
+  resetRateLimits();
+  const locked = await call(sessionHandler, { method: 'POST', body: { passphrase: 'guess-5' } });
+  assert.equal(locked.statusCode, 429, 'the fifth failure starts the lock');
+  assert.ok(Number(locked.getHeader('retry-after')) >= 1);
+
+  resetRateLimits();
+  const correct = await call(sessionHandler, {
+    method: 'POST',
+    body: { passphrase: process.env.BOARD_PASSPHRASE },
+  });
+  assert.equal(correct.statusCode, 429, 'the lock applies before the credential is checked');
+
+  await auth.clearAttempts();
+  resetRateLimits();
+  const after = await call(sessionHandler, {
+    method: 'POST',
+    body: { passphrase: process.env.BOARD_PASSPHRASE },
+  });
+  assert.equal(after.statusCode, 200, 'a successful sign-in clears the counter');
+  token = /kk_session=([^;]+)/.exec(after.getHeader('set-cookie'))[1];
 });
 
 check('concurrent writes do not lose notes', async () => {
@@ -376,6 +474,7 @@ check('concurrent writes do not lose notes', async () => {
     // The passphrase hash lives beside the board; a stale one would make the
     // bootstrap passphrase stop working and poison the next run.
     await del('test/auth.json').catch(() => {});
+    await del(auth.ATTEMPTS_PATH).catch(() => {});
   }
 
   let failed = 0;

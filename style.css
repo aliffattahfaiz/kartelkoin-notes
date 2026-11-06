@@ -216,6 +216,57 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .gate-switch:hover { color: var(--text-dim); }
 
+/* Credential type: two honest options, PIN first because it is what most
+   sessions use. The radio stays in the accessibility tree. */
+.kind-set {
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+.kind-set .field-label { margin-bottom: 8px; }
+
+.kind-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.kind-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.kind-option:hover { border-color: var(--text-muted); color: var(--text); }
+
+.kind-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.kind-option:has(input:checked) {
+  border-color: var(--amber);
+  background: var(--amber-sunk);
+  color: var(--amber-bright);
+}
+
+.kind-option input:focus-visible + span {
+  outline: 2px solid var(--amber-bright);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
 /* ------------------------------------------------------------------ fields */
 
 .field {

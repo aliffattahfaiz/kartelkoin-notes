@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>KartelKoin Notes</title>
-<meta name="description" content="A private, single-board notes ledger. Passphrase-gated, no tracking, no third parties.">
+<meta name="description" content="A private, single-board notes ledger. PIN or passphrase, no tracking, no third parties.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0a0a0b">
 <meta name="robots" content="noindex, nofollow">
@@ -31,51 +31,66 @@
     </div>
   </header>
 
-  <!-- Gate: nothing below this is rendered until the passphrase is accepted. -->
+  <!-- Gate: nothing below this is rendered until the PIN or passphrase is
+       accepted. -->
   <main id="gate" class="gate" hidden>
     <form id="gate-form" class="gate-card" autocomplete="off">
       <h1 class="gate-title">This board is private</h1>
-      <p class="gate-lede">
-        Enter the board passphrase. It is exchanged for a signed cookie, so it is
-        not stored in this browser after you sign in.
+      <p class="gate-lede" id="gate-lede">
+        Enter your PIN or passphrase. It is exchanged for a signed cookie, so it
+        is not stored in this browser after you sign in.
       </p>
       <label class="field">
-        <span class="field-label">Passphrase</span>
+        <span class="field-label" id="gate-label">PIN or passphrase</span>
         <input id="gate-passphrase" type="password" name="passphrase" required
-               autocomplete="current-password" spellcheck="false" autocapitalize="off">
+               autocomplete="current-password" spellcheck="false" autocapitalize="off"
+               enterkeyhint="go">
       </label>
       <p id="gate-error" class="gate-error" role="alert" hidden></p>
       <button type="submit" id="gate-submit" class="btn btn-primary">Unlock board</button>
       <p class="gate-note">Sessions last 30 days on this device.</p>
-      <button type="button" id="gate-change-toggle" class="link-btn gate-switch">Change the passphrase</button>
+      <button type="button" id="gate-change-toggle" class="link-btn gate-switch">Change the PIN or passphrase</button>
     </form>
 
-    <!-- The passphrase is set here, by whoever holds it, so no agent or admin
+    <!-- The credential is set here, by whoever holds it, so no agent or admin
          ever needs to see it. Requires the current one, and signs out every
          other device. -->
     <form id="change-form" class="gate-card gate-card-secondary" autocomplete="off" hidden>
-      <h2 class="gate-title gate-title-small">Change the passphrase</h2>
+      <h2 class="gate-title gate-title-small">Change the PIN or passphrase</h2>
       <p class="gate-lede">
-        Enter the current passphrase, then the new one. Every other device is
-        signed out when it changes.
+        Enter the current one, then choose what replaces it. Every other device
+        is signed out when it changes.
       </p>
+      <fieldset class="kind-set">
+        <legend class="field-label">Use a</legend>
+        <div class="kind-switch">
+          <label class="kind-option">
+            <input type="radio" name="credential-kind" value="pin" id="kind-pin" checked>
+            <span>PIN</span>
+          </label>
+          <label class="kind-option">
+            <input type="radio" name="credential-kind" value="passphrase" id="kind-passphrase">
+            <span>Passphrase</span>
+          </label>
+        </div>
+      </fieldset>
       <label class="field">
-        <span class="field-label">Current passphrase</span>
+        <span class="field-label">Current PIN or passphrase</span>
         <input id="change-current" type="password" required autocomplete="current-password" spellcheck="false">
       </label>
       <label class="field">
-        <span class="field-label">New passphrase</span>
+        <span class="field-label" id="change-next-label">New PIN</span>
         <input id="change-next" type="password" required autocomplete="new-password" spellcheck="false"
-               autocapitalize="off" minlength="12">
+               autocapitalize="off" inputmode="numeric" minlength="4" maxlength="12">
       </label>
       <label class="field">
-        <span class="field-label">Repeat the new passphrase</span>
+        <span class="field-label" id="change-confirm-label">Repeat the new PIN</span>
         <input id="change-confirm" type="password" required autocomplete="new-password" spellcheck="false"
-               autocapitalize="off">
+               autocapitalize="off" inputmode="numeric" maxlength="12">
       </label>
-      <p class="gate-note">At least <span id="change-min">12</span> characters. A four-digit PIN is a few thousand guesses.</p>
+      <p class="gate-note" id="change-hint">4 to 12 digits. Five wrong attempts start a short lockout, so a four-digit PIN is no longer ten thousand free guesses.</p>
       <p id="change-error" class="gate-error" role="alert" hidden></p>
-      <button type="submit" id="change-submit" class="btn btn-primary">Change passphrase</button>
+      <button type="submit" id="change-submit" class="btn btn-primary">Save new PIN</button>
       <button type="button" id="change-cancel" class="btn btn-quiet">Cancel</button>
     </form>
   </main>

@@ -33,6 +33,9 @@ const state = {
   composerOpen: true,
   lastSyncedAt: null,
   minLength: 12,
+  pinMin: 4,
+  pinMax: 12,
+  credentialKind: 'passphrase',
 };
 
 const el = {};
@@ -170,57 +173,109 @@ function showGate() {
 function setMinLength(value) {
   const parsed = Number(value);
   if (Number.isFinite(parsed) && parsed >= 4) state.minLength = Math.floor(parsed);
-  el.changeMin.textContent = String(state.minLength);
-  el.changeNext.minLength = state.minLength;
+}
+
+/** Adopts the policy the server reports, so the gate asks for the right thing. */
+function applyPolicy(data) {
+  if (!data || typeof data !== 'object') return;
+  setMinLength(data.minLength);
+  const pinMin = Number(data.pinMinLength);
+  const pinMax = Number(data.pinMaxLength);
+  if (Number.isFinite(pinMin) && pinMin >= 4) state.pinMin = Math.floor(pinMin);
+  if (Number.isFinite(pinMax) && pinMax >= state.pinMin) state.pinMax = Math.floor(pinMax);
+  if (data.kind === 'pin' || data.kind === 'passphrase') state.credentialKind = data.kind;
+  describeGate();
+}
+
+/** The gate input follows the stored credential: numeric keypad for a PIN. */
+function describeGate() {
+  const pin = state.credentialKind === 'pin';
+  el.gateLabel.textContent = pin ? 'PIN' : 'Passphrase';
+  el.gatePassphrase.setAttribute('inputmode', pin ? 'numeric' : 'text');
+  if (pin) el.gatePassphrase.setAttribute('maxlength', String(state.pinMax));
+  else el.gatePassphrase.removeAttribute('maxlength');
+  el.gateLede.textContent = pin
+    ? 'Enter your PIN. It is exchanged for a signed cookie, so it is not stored in this browser after you sign in.'
+    : 'Enter your passphrase. It is exchanged for a signed cookie, so it is not stored in this browser after you sign in.';
+}
+
+/** Switches the change form between the two credential shapes. */
+function useKind(kind) {
+  const pin = kind === 'pin';
+  el.kindPin.checked = pin;
+  el.kindPassphrase.checked = !pin;
+  el.changeNextLabel.textContent = pin ? 'New PIN' : 'New passphrase';
+  el.changeConfirmLabel.textContent = pin ? 'Repeat the new PIN' : 'Repeat the new passphrase';
+  el.changeSubmit.textContent = pin ? 'Save new PIN' : 'Save new passphrase';
+  el.changeHint.textContent = pin
+    ? `${state.pinMin} to ${state.pinMax} digits. Five wrong attempts start a short lockout, so a four-digit PIN is no longer ten thousand free guesses.`
+    : `At least ${state.minLength} characters. A four-digit PIN is available if you prefer it.`;
+  for (const input of [el.changeNext, el.changeConfirm]) {
+    input.minLength = pin ? state.pinMin : state.minLength;
+    input.maxLength = pin ? state.pinMax : 256;
+    input.setAttribute('inputmode', pin ? 'numeric' : 'text');
+  }
 }
 
 function showChangeForm(show) {
   el.gateForm.hidden = show;
   el.changeForm.hidden = !show;
   el.changeError.hidden = true;
-  if (show) requestAnimationFrame(() => el.changeCurrent.focus());
-  else requestAnimationFrame(() => el.gatePassphrase.focus());
+  if (show) {
+    useKind('pin');
+    requestAnimationFrame(() => el.changeCurrent.focus());
+  } else {
+    describeGate();
+    requestAnimationFrame(() => el.gatePassphrase.focus());
+  }
 }
 
-async function submitPassphraseChange() {
+async function submitCredentialChange() {
   const current = el.changeCurrent.value;
   const next = el.changeNext.value;
   const confirm = el.changeConfirm.value;
+  const kind = el.kindPin.checked ? 'pin' : 'passphrase';
 
   const fail = (message) => {
     el.changeError.textContent = message;
     el.changeError.hidden = false;
   };
 
-  if (!current) return fail('Enter the current passphrase.');
-  if (next !== confirm) return fail('The two new passphrases do not match.');
-  if (next.length < state.minLength) {
+  if (!current) return fail('Enter the current PIN or passphrase.');
+  if (next !== confirm) return fail('The two entries do not match.');
+  if (kind === 'pin') {
+    if (!/^\d+$/.test(next)) return fail('A PIN is numbers only.');
+    if (next.length < state.pinMin || next.length > state.pinMax) {
+      return fail(`A PIN is ${state.pinMin} to ${state.pinMax} digits.`);
+    }
+  } else if (next.length < state.minLength) {
     return fail(`Use at least ${state.minLength} characters.`);
   }
 
   el.changeSubmit.disabled = true;
-  el.changeSubmit.textContent = 'Changing…';
+  el.changeSubmit.textContent = 'Saving…';
   try {
     const response = await fetch(API.session, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'change', current, next }),
+      body: JSON.stringify({ action: 'change', current, next, kind }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'The passphrase could not be changed');
+    if (!response.ok) throw new Error(data.error || 'The change could not be saved');
 
     el.changeCurrent.value = '';
     el.changeNext.value = '';
     el.changeConfirm.value = '';
+    applyPolicy(data);
     showChangeForm(false);
     showBoard();
     await loadBoard();
-    notify('Passphrase changed. Other devices are signed out.');
+    notify(kind === 'pin' ? 'PIN saved. Other devices are signed out.' : 'Passphrase saved. Other devices are signed out.');
   } catch (err) {
-    fail(err.message || 'The passphrase could not be changed');
+    fail(err.message || 'The change could not be saved');
   } finally {
     el.changeSubmit.disabled = false;
-    el.changeSubmit.textContent = 'Change passphrase';
+    el.changeSubmit.textContent = kind === 'pin' ? 'Save new PIN' : 'Save new passphrase';
   }
 }
 
@@ -243,7 +298,7 @@ async function unlock(passphrase) {
     error.status = response.status;
     throw error;
   }
-  if (data.minLength) setMinLength(data.minLength);
+  applyPolicy(data);
   return data;
 }
 
@@ -851,10 +906,12 @@ function bindEvents() {
   el.lockBtn.addEventListener('click', lock);
 
   el.gateChangeToggle.addEventListener('click', () => showChangeForm(true));
+  el.kindPin.addEventListener('change', () => useKind('pin'));
+  el.kindPassphrase.addEventListener('change', () => useKind('passphrase'));
   el.changeCancel.addEventListener('click', () => showChangeForm(false));
   el.changeForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    submitPassphraseChange();
+    submitCredentialChange();
   });
 
   el.composerForm.addEventListener('submit', (event) => {
@@ -948,6 +1005,8 @@ function cacheElements() {
   el.gate = $('gate');
   el.gateForm = $('gate-form');
   el.gatePassphrase = $('gate-passphrase');
+  el.gateLabel = $('gate-label');
+  el.gateLede = $('gate-lede');
   el.gateSubmit = $('gate-submit');
   el.gateError = $('gate-error');
   el.gateChangeToggle = $('gate-change-toggle');
@@ -956,7 +1015,11 @@ function cacheElements() {
   el.changeCurrent = $('change-current');
   el.changeNext = $('change-next');
   el.changeConfirm = $('change-confirm');
-  el.changeMin = $('change-min');
+  el.kindPin = $('kind-pin');
+  el.kindPassphrase = $('kind-passphrase');
+  el.changeNextLabel = $('change-next-label');
+  el.changeConfirmLabel = $('change-confirm-label');
+  el.changeHint = $('change-hint');
   el.changeError = $('change-error');
   el.changeSubmit = $('change-submit');
   el.changeCancel = $('change-cancel');
@@ -1008,14 +1071,14 @@ async function init() {
   try {
     const response = await fetch(API.session, { cache: 'no-store' });
     const data = await response.json().catch(() => ({}));
-    if (data.minLength) setMinLength(data.minLength);
+    applyPolicy(data);
     if (data.authenticated) {
       showBoard();
       await loadBoard();
       return;
     }
     if (data.configured === false) {
-      el.gateError.textContent = 'This board has no passphrase configured yet.';
+      el.gateError.textContent = 'This board has no PIN or passphrase configured yet.';
       el.gateError.hidden = false;
     }
   } catch {
