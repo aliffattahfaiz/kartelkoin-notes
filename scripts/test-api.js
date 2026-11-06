@@ -284,13 +284,19 @@ check('a passphrase change needs the current passphrase', async () => {
   assert.equal(res.statusCode, 401);
 });
 
-check('a passphrase change refuses a short one', async () => {
+check('a passphrase change refuses a short one, and writes nothing', async () => {
+  const auth = require('../lib/auth');
+  const before = await auth.readAuth({ fresh: true });
+
   const res = await call(sessionHandler, {
     method: 'POST',
     body: { action: 'change', current: process.env.BOARD_PASSPHRASE, next: '7072' },
   });
   assert.equal(res.statusCode, 400);
   assert.match(res.json.error, /12 characters/);
+
+  const after = await auth.readAuth({ fresh: true });
+  assert.equal(after && after.epoch, before && before.epoch, 'a rejected change must not bump the epoch');
 });
 
 check('changing the passphrase rotates the passphrase and the epoch', async () => {
