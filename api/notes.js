@@ -166,6 +166,7 @@ async function updateNote(res, body) {
       content: body.content === undefined ? existing.content : body.content,
       tags: body.tags === undefined ? existing.tags : body.tags,
       pinned: body.pinned === undefined ? existing.pinned : body.pinned,
+      done: body.done === undefined ? existing.done : body.done,
     });
     if (!normalised.ok) {
       problem = normalised.error;

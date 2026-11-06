@@ -15,9 +15,10 @@ browser ──PIN or passphrase──▶ /api/session ──▶ signed HttpOnly 
 
 | Path | Purpose |
 |------|---------|
-| `index.html` | Markup: gate, composer, board, trash, toasts |
-| `style.css` | All styling, dark "quiet ledger", responsive at 900px and 620px |
-| `app.js` | Gate, editor, search/sort/tag filter, undo-able delete, export |
+| `index.html` | Markup: gate, ledger, editor sheet, trash, one toast region |
+| `style.css` | All styling, dark "quiet ledger", responsive at 820px |
+| `app.js` | Segmented gate, ledger, editor sheet, search/sort/tag filter, done state, delete confirm, export |
+| `toast-queue.js` | One notice at a time, with a "+N" counter for a burst |
 | `api/session.js` | PIN or passphrase → signed session cookie, and the in-app credential change |
 | `api/notes.js` | Authenticated GET/POST/PATCH/DELETE over the board |
 | `lib/session.js` | HMAC-signed cookie, origin allowlist, fixed-window rate limit |
@@ -26,6 +27,7 @@ browser ──PIN or passphrase──▶ /api/session ──▶ signed HttpOnly 
 | `lib/notes.js` | Input normalisation, derived titles, limits, trash retention |
 | `scripts/guard.mjs` | Regression guard for defects that shipped once |
 | `scripts/test-api.js` | End-to-end checks against the real handlers |
+| `scripts/test-toast.js` | Queue behaviour without a DOM |
 | `REVAMP.md` | Ranked revamp plan and the owner actions still open |
 
 The board is a single JSON document in a **private** Vercel Blob. A write only
@@ -83,6 +85,26 @@ response sets a fresh cookie so the person who changed it stays signed in. A
 stolen cookie therefore cannot survive a rotation, and cannot itself change the
 credential, because the current one is required.
 
+## Interface
+
+The board is a quiet ledger: a 64 px date gutter, the note, and its status in a
+hairline row. Done notes sink under a **Done** divider. **New note** or `N` opens
+a sheet (right drawer on desktop, bottom sheet at 390 px), `Esc` closes it and
+`⌘/Ctrl + Enter` saves. Delete confirms in place — the button becomes
+**Confirm?** for four seconds — and the toast offers Undo. Notices share one
+region, one at a time, with a `+N` counter for a burst.
+
+The gate draws one cell per stored digit when the PIN is four to six digits
+(`GET /api/session` reports only the count, `pinLength`, never the value). A
+seven-to-twelve digit PIN uses one masked field, and a passphrase uses the same
+field. Typing, paste, arrows and backspace are the real input's behaviour: the
+cells are painted from it, not a separate control. Failures shake the cells and
+put the lockout copy beside them.
+
+The PIN cell pattern is from [Rare UI](https://rareui.com); the credit stays in
+the footer as the licence requires. No component library or framework is
+loaded.
+
 ## Local development
 
 ```bash
@@ -95,7 +117,7 @@ vercel dev
 ## Checks
 
 ```bash
-node scripts/test-api.js   # 28 end-to-end checks against a scratch blob; needs the token
+npm test                   # 6 queue checks + 30 end-to-end checks against a scratch blob
 node scripts/guard.mjs     # regression guard; exit 1 on a new defect
 ```
 
@@ -119,6 +141,8 @@ the credential in the old static store.
 - All rendering is `textContent`; there is no `innerHTML` and no HTML string
   concatenation of user data anywhere in the client.
 - Deletes are soft, kept 30 days in the trash, and undoable from the toast.
+- `pinLength` is a digit count for the gate's layout. It is not the PIN, and the
+  API never returns the value.
 
 ## License
 

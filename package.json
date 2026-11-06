@@ -11,7 +11,8 @@
   "scripts": {
     "guard": "node scripts/guard.mjs",
     "guard:list": "node scripts/guard.mjs --list",
-    "test": "node scripts/test-api.js"
+    "test": "node scripts/test-toast.js && node scripts/test-api.js",
+    "test:toast": "node scripts/test-toast.js"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.2"
