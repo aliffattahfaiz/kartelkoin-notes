@@ -112,7 +112,7 @@ function notify(message, options = {}) {
     action.textContent = options.action.label;
     action.addEventListener('click', () => {
       dismissToast(node);
-      options.action.run();
+      if (typeof options.action.run === 'function') options.action.run();
     });
     node.appendChild(action);
   }
@@ -127,7 +127,9 @@ function notify(message, options = {}) {
     button.textContent = action.label;
     button.addEventListener('click', () => {
       dismissToast(node);
-      action.run();
+      // "Keep writing" / "Keep" carry no run() — they mean "do nothing", and
+      // calling the missing function threw inside the click handler.
+      if (typeof action.run === 'function') action.run();
     });
     node.appendChild(button);
   }

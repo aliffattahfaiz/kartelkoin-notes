@@ -139,11 +139,10 @@ async function updateNote(res, body) {
   if (typeof body.id !== 'string' || !body.id) {
     return json(res, 400, { error: 'Note id is required' });
   }
-  const normalised = normalizeNoteInput(body);
-  if (!normalised.ok) return json(res, 400, { error: normalised.error });
 
   let notFound = false;
   let conflict = false;
+  let problem = null;
 
   const { board } = await updateBoard((draft) => {
     const index = draft.notes.findIndex((note) => note.id === body.id && !note.deletedAt);
@@ -158,6 +157,21 @@ async function updateNote(res, body) {
       conflict = true;
       return false;
     }
+
+    // A PATCH only needs the fields it changes. Merging first means a client
+    // that sends { id, content } keeps its title and tags instead of having
+    // them silently reset.
+    const normalised = normalizeNoteInput({
+      title: body.title === undefined ? existing.title : body.title,
+      content: body.content === undefined ? existing.content : body.content,
+      tags: body.tags === undefined ? existing.tags : body.tags,
+      pinned: body.pinned === undefined ? existing.pinned : body.pinned,
+    });
+    if (!normalised.ok) {
+      problem = normalised.error;
+      return false;
+    }
+
     draft.notes[index] = {
       ...existing,
       ...normalised.value,
@@ -171,6 +185,7 @@ async function updateNote(res, body) {
   if (conflict) {
     return json(res, 409, { error: 'This note changed while you were editing. Reload to see the latest.' });
   }
+  if (problem) return json(res, 400, { error: problem });
   return boardResponse(res, board);
 }
 

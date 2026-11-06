@@ -213,6 +213,27 @@ check('a stale version is a 409, a matching one succeeds', async () => {
   assert.equal(note.version, 2);
 });
 
+check('a partial PATCH keeps the fields it does not send', async () => {
+  const created = await call(notesHandler, {
+    method: 'POST',
+    body: { title: 'Partial', content: 'first body', tags: ['keep', 'these'] },
+    headers: cookie(),
+  });
+  assert.equal(created.statusCode, 200);
+  const note = created.json.notes.find((n) => n.title === 'Partial');
+
+  const patched = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: note.id, content: 'second body', version: note.version },
+    headers: cookie(),
+  });
+  assert.equal(patched.statusCode, 200);
+  const after = patched.json.notes.find((n) => n.id === note.id);
+  assert.equal(after.content, 'second body');
+  assert.equal(after.title, 'Partial', 'title survives a PATCH that omits it');
+  assert.deepEqual(after.tags, ['keep', 'these'], 'tags survive a PATCH that omits them');
+});
+
 check('delete is a soft delete that can be undone', async () => {
   const removed = await call(notesHandler, {
     method: 'DELETE',
