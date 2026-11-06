@@ -157,6 +157,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .gate {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
   padding: 12vh 0 8vh;
 }
 
@@ -198,6 +200,21 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 
 .gate-card .btn { width: 100%; margin-top: 18px; }
+
+.gate-card-secondary { border-color: var(--rule-strong); }
+
+.gate-title-small { font-size: 1.25rem; }
+
+.gate-switch {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.gate-switch:hover { color: var(--text-dim); }
 
 /* ------------------------------------------------------------------ fields */
 

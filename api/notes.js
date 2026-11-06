@@ -52,13 +52,13 @@ function boardResponse(res, board, { notModified = false } = {}) {
 }
 
 module.exports = async (req, res) => {
-  if (!configured()) {
+  if (!(await configured())) {
     return json(res, 503, { error: 'This board is not configured.' });
   }
 
   // Every route here is private. There is no anonymous read path: the board
   // holds whatever the owner typed, which in the old store included passwords.
-  if (!isAuthenticated(req)) {
+  if (!(await isAuthenticated(req))) {
     return json(res, 401, { error: 'Sign in to read this board' });
   }
 

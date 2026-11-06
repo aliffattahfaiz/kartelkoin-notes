@@ -276,6 +276,74 @@ check('control characters are stripped from stored text', async () => {
   assert.equal(note.content, 'textwithcontrol');
 });
 
+check('a passphrase change needs the current passphrase', async () => {
+  const res = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: 'not-the-passphrase', next: 'another-long-passphrase' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+check('a passphrase change refuses a short one', async () => {
+  const res = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: process.env.BOARD_PASSPHRASE, next: '7072' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.json.error, /12 characters/);
+});
+
+check('changing the passphrase rotates the passphrase and the epoch', async () => {
+  const before = process.env.BOARD_PASSPHRASE;
+  const next = 'a-new-and-longer-passphrase-2026';
+  const oldCookie = token;
+
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: before, next },
+  });
+  assert.equal(changed.statusCode, 200);
+  const changedCookie = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+  assert.notEqual(changedCookie, oldCookie);
+
+  // Every cookie minted before the change is dead, even though its signature
+  // still checks out.
+  const withOld = await call(notesHandler, {
+    method: 'GET',
+    headers: { cookie: `kk_session=${oldCookie}` },
+  });
+  assert.equal(withOld.statusCode, 401, 'a pre-change cookie no longer reads the board');
+
+  const withNew = await call(notesHandler, {
+    method: 'GET',
+    headers: { cookie: `kk_session=${changedCookie}` },
+  });
+  assert.equal(withNew.statusCode, 200, 'the cookie from the change still works');
+
+  // The old passphrase stops working, the new one signs in.
+  assert.equal(
+    (await call(sessionHandler, { method: 'POST', body: { passphrase: before } })).statusCode,
+    401
+  );
+  const signIn = await call(sessionHandler, { method: 'POST', body: { passphrase: next } });
+  assert.equal(signIn.statusCode, 200);
+  assert.match(signIn.getHeader('set-cookie'), /HttpOnly/);
+
+  // Put the test passphrase back so anything after this still works.
+  const restored = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: next, next: before },
+  });
+  assert.equal(restored.statusCode, 200);
+  token = /kk_session=([^;]+)/.exec(restored.getHeader('set-cookie'))[1];
+});
+
+check('the session route reports the minimum length', async () => {
+  const res = await call(sessionHandler, { method: 'GET' });
+  assert.equal(res.statusCode, 200);
+  assert.ok(Number(res.json.minLength) >= 8);
+});
+
 check('concurrent writes do not lose notes', async () => {
   const before = (await call(notesHandler, { method: 'GET', headers: cookie() })).json.notes.length;
   const writers = Array.from({ length: 6 }, (_, index) =>
@@ -299,6 +367,9 @@ check('concurrent writes do not lose notes', async () => {
   // quietly poisons the next run instead of this one.
   if (BOARD_PATH && BOARD_PATH.startsWith('test/')) {
     await del(BOARD_PATH).catch(() => {});
+    // The passphrase hash lives beside the board; a stale one would make the
+    // bootstrap passphrase stop working and poison the next run.
+    await del('test/auth.json').catch(() => {});
   }
 
   let failed = 0;

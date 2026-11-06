@@ -18,9 +18,10 @@ browser ──passphrase──▶ /api/session ──▶ signed HttpOnly cookie
 | `index.html` | Markup: gate, composer, board, trash, toasts |
 | `style.css` | All styling, dark "quiet ledger", responsive at 900px and 620px |
 | `app.js` | Gate, editor, search/sort/tag filter, undo-able delete, export |
-| `api/session.js` | Passphrase → signed session cookie; the only unauthenticated write |
+| `api/session.js` | Passphrase → signed session cookie, and the in-app passphrase change |
 | `api/notes.js` | Authenticated GET/POST/PATCH/DELETE over the board |
 | `lib/session.js` | HMAC-signed cookie, origin allowlist, fixed-window rate limit |
+| `lib/auth.js` | scrypt passphrase hash, passphrase epoch, minimum length |
 | `lib/store.js` | Blob document, ETag-guarded writes, in-process serialisation |
 | `lib/notes.js` | Input normalisation, derived titles, limits, trash retention |
 | `scripts/guard.mjs` | Regression guard for defects that shipped once |
@@ -39,14 +40,30 @@ approves the purge, and `.vercelignore` keeps it out of every deployment.
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `BOARD_PASSPHRASE` | yes | Shared board secret, 12+ characters. Rotating it invalidates nothing except future sign-ins; existing cookies stay valid until `SESSION_SECRET` changes. |
+| `BOARD_PASSPHRASE` | bootstrap | First passphrase, 12+ characters. Once someone changes it in the app, the stored hash takes over and this value is ignored. |
+| `BOARD_PASSPHRASE_MIN_LENGTH` | no | Defaults to 12, never below 8. Set it lower only if you understand that a four-digit PIN is ten thousand guesses. |
 | `SESSION_SECRET` | yes | 32+ random characters. Signs the session cookie. Rotate it to sign every device out. |
 | `BLOB_READ_WRITE_TOKEN` | yes | Vercel Blob store, private. Set by the Vercel integration. |
 | `ALLOWED_ORIGINS` | no | Comma-separated origin allowlist. Defaults to the host that served the request, which is what keeps preview deployments working. |
 | `BOARD_BLOB_PATH` | no | Defaults to `board.json`. Tests point it at a scratch path. |
 
-The API fails closed with `503` when `BOARD_PASSPHRASE` or `SESSION_SECRET` is
-missing or too short. There is no default passphrase and no anonymous read.
+The API fails closed with `503` when `SESSION_SECRET` is missing, or when there
+is no passphrase from either source. There is no default passphrase and no
+anonymous read.
+
+### Changing the passphrase
+
+The gate has a **Change the passphrase** link. It asks for the current
+passphrase, then the new one, and stores a salted scrypt hash
+(`lib/auth.js`, N=16384) in a private blob beside the board — `auth.json` in
+production, `preview/auth.json` everywhere else. No agent or admin ever needs
+to see the value, and nothing has to be redeployed.
+
+Every session token carries the passphrase *epoch*. Changing the passphrase
+bumps it, so cookies minted before the change stop working immediately; the
+response sets a fresh cookie so the person who changed it stays signed in. A
+stolen cookie therefore cannot survive a rotation, and cannot itself change the
+passphrase, because the current passphrase is required.
 
 ## Local development
 
@@ -60,7 +77,7 @@ vercel dev
 ## Checks
 
 ```bash
-node scripts/test-api.js   # 18 end-to-end checks against a scratch blob; needs the token
+node scripts/test-api.js   # 23 end-to-end checks against a scratch blob; needs the token
 node scripts/guard.mjs     # regression guard; exit 1 on a new defect
 ```
 

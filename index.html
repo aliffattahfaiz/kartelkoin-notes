@@ -47,6 +47,36 @@
       <p id="gate-error" class="gate-error" role="alert" hidden></p>
       <button type="submit" id="gate-submit" class="btn btn-primary">Unlock board</button>
       <p class="gate-note">Sessions last 30 days on this device.</p>
+      <button type="button" id="gate-change-toggle" class="link-btn gate-switch">Change the passphrase</button>
+    </form>
+
+    <!-- The passphrase is set here, by whoever holds it, so no agent or admin
+         ever needs to see it. Requires the current one, and signs out every
+         other device. -->
+    <form id="change-form" class="gate-card gate-card-secondary" autocomplete="off" hidden>
+      <h2 class="gate-title gate-title-small">Change the passphrase</h2>
+      <p class="gate-lede">
+        Enter the current passphrase, then the new one. Every other device is
+        signed out when it changes.
+      </p>
+      <label class="field">
+        <span class="field-label">Current passphrase</span>
+        <input id="change-current" type="password" required autocomplete="current-password" spellcheck="false">
+      </label>
+      <label class="field">
+        <span class="field-label">New passphrase</span>
+        <input id="change-next" type="password" required autocomplete="new-password" spellcheck="false"
+               autocapitalize="off" minlength="12">
+      </label>
+      <label class="field">
+        <span class="field-label">Repeat the new passphrase</span>
+        <input id="change-confirm" type="password" required autocomplete="new-password" spellcheck="false"
+               autocapitalize="off">
+      </label>
+      <p class="gate-note">At least <span id="change-min">12</span> characters. A four-digit PIN is a few thousand guesses.</p>
+      <p id="change-error" class="gate-error" role="alert" hidden></p>
+      <button type="submit" id="change-submit" class="btn btn-primary">Change passphrase</button>
+      <button type="button" id="change-cancel" class="btn btn-quiet">Cancel</button>
     </form>
   </main>
 

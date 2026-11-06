@@ -32,6 +32,7 @@ const state = {
   busy: false,
   composerOpen: true,
   lastSyncedAt: null,
+  minLength: 12,
 };
 
 const el = {};
@@ -161,7 +162,66 @@ function showGate() {
   el.app.hidden = true;
   el.lockBtn.hidden = true;
   el.statusLine.textContent = '';
+  el.changeForm.hidden = true;
+  el.gateForm.hidden = false;
   requestAnimationFrame(() => el.gatePassphrase.focus());
+}
+
+function setMinLength(value) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed >= 4) state.minLength = Math.floor(parsed);
+  el.changeMin.textContent = String(state.minLength);
+  el.changeNext.minLength = state.minLength;
+}
+
+function showChangeForm(show) {
+  el.gateForm.hidden = show;
+  el.changeForm.hidden = !show;
+  el.changeError.hidden = true;
+  if (show) requestAnimationFrame(() => el.changeCurrent.focus());
+  else requestAnimationFrame(() => el.gatePassphrase.focus());
+}
+
+async function submitPassphraseChange() {
+  const current = el.changeCurrent.value;
+  const next = el.changeNext.value;
+  const confirm = el.changeConfirm.value;
+
+  const fail = (message) => {
+    el.changeError.textContent = message;
+    el.changeError.hidden = false;
+  };
+
+  if (!current) return fail('Enter the current passphrase.');
+  if (next !== confirm) return fail('The two new passphrases do not match.');
+  if (next.length < state.minLength) {
+    return fail(`Use at least ${state.minLength} characters.`);
+  }
+
+  el.changeSubmit.disabled = true;
+  el.changeSubmit.textContent = 'Changing…';
+  try {
+    const response = await fetch(API.session, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'change', current, next }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'The passphrase could not be changed');
+
+    el.changeCurrent.value = '';
+    el.changeNext.value = '';
+    el.changeConfirm.value = '';
+    showChangeForm(false);
+    showBoard();
+    await loadBoard();
+    notify('Passphrase changed. Other devices are signed out.');
+  } catch (err) {
+    fail(err.message || 'The passphrase could not be changed');
+  } finally {
+    el.changeSubmit.disabled = false;
+    el.changeSubmit.textContent = 'Change passphrase';
+  }
 }
 
 function showBoard() {
@@ -183,6 +243,7 @@ async function unlock(passphrase) {
     error.status = response.status;
     throw error;
   }
+  if (data.minLength) setMinLength(data.minLength);
   return data;
 }
 
@@ -789,6 +850,13 @@ function bindEvents() {
 
   el.lockBtn.addEventListener('click', lock);
 
+  el.gateChangeToggle.addEventListener('click', () => showChangeForm(true));
+  el.changeCancel.addEventListener('click', () => showChangeForm(false));
+  el.changeForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitPassphraseChange();
+  });
+
   el.composerForm.addEventListener('submit', (event) => {
     event.preventDefault();
     saveNote();
@@ -882,6 +950,16 @@ function cacheElements() {
   el.gatePassphrase = $('gate-passphrase');
   el.gateSubmit = $('gate-submit');
   el.gateError = $('gate-error');
+  el.gateChangeToggle = $('gate-change-toggle');
+
+  el.changeForm = $('change-form');
+  el.changeCurrent = $('change-current');
+  el.changeNext = $('change-next');
+  el.changeConfirm = $('change-confirm');
+  el.changeMin = $('change-min');
+  el.changeError = $('change-error');
+  el.changeSubmit = $('change-submit');
+  el.changeCancel = $('change-cancel');
 
   el.app = $('app');
   el.statusLine = $('status-line');
@@ -930,6 +1008,7 @@ async function init() {
   try {
     const response = await fetch(API.session, { cache: 'no-store' });
     const data = await response.json().catch(() => ({}));
+    if (data.minLength) setMinLength(data.minLength);
     if (data.authenticated) {
       showBoard();
       await loadBoard();
