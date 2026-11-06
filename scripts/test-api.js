@@ -272,6 +272,14 @@ check('concurrent writes do not lose notes', async () => {
 });
 
 (async () => {
+  // Reset the scratch document *before* the run, not after it. A failed store
+  // write can still be retrying when the process tries to clean up, and the
+  // retry then recreates the document with every note the run added — which
+  // quietly poisons the next run instead of this one.
+  if (BOARD_PATH && BOARD_PATH.startsWith('test/')) {
+    await del(BOARD_PATH).catch(() => {});
+  }
+
   let failed = 0;
   for (const { name, fn } of results) {
     try {
@@ -282,10 +290,6 @@ check('concurrent writes do not lose notes', async () => {
       console.log(`FAIL ${name}`);
       console.log(`     ${err.message}`);
     }
-  }
-
-  if (BOARD_PATH && BOARD_PATH.startsWith('test/')) {
-    await del(BOARD_PATH).catch(() => {});
   }
 
   console.log(`\n${results.length - failed}/${results.length} passed`);
