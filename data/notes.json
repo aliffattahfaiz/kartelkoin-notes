@@ -1,11 +1,5 @@
 [
   {
-    "id": "mw4g665k",
-    "title": "QA API PROBE",
-    "content": "created without auth - deleting now",
-    "createdAt": "2026-11-06T04:01:11.336Z"
-  },
-  {
     "id": "mw4g64p3",
     "title": "QA XSS probe",
     "content": "<img src=x onerror=\"window.__xss=1\">",
