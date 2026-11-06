@@ -1,0 +1,12 @@
+# The old store. It is still in git history until the owner approves a purge,
+# but it must never be served as a static file again: /data/notes.json was
+# publicly readable and contained credential-shaped notes.
+data/
+
+# Local and meta files that have no business in a deployment.
+.env*
+.vercel
+node_modules
+README.md
+REVAMP.md
+scripts/

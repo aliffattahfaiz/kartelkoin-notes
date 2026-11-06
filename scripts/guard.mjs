@@ -58,8 +58,17 @@ for (const f of files.filter((f) => /^api\/.*\.js$/.test(rel(f)))) {
   const text = read(f);
   const writes = /req\.method\s*===?\s*['"](POST|PATCH|PUT|DELETE)['"]/.test(text);
   // Must read the *caller's* credentials, not an outbound service token.
-  const hasAuth = /req\.headers(\.authorization|\[['"]authorization['"]\]|\.cookie|\[['"]cookie['"]\]|\[['"]x-api-key['"]\])|req\.cookies|getServerSession|verifyToken|requireAuth|requireSession/.test(text);
-  if (writes && !hasAuth) {
+  const hasAuth = /req\.headers(\.authorization|\[['"]authorization['"]\]|\.cookie|\[['"]cookie['"]\]|\[['"]x-api-key['"]\])|req\.cookies|getServerSession|verifyToken|requireAuth|requireSession|isAuthenticated\(/.test(text);
+  // A session helper only counts when it actually gates the handler: a bare
+  // import of `isAuthenticated` must not buy a route a pass. Accept the shapes
+  // that refuse the request — `if (!isAuthenticated(req))`, `if (isAuthenticated`,
+  // `await requireSession(` — and nothing weaker.
+  const gatesOnSession = /!\s*isAuthenticated\(|if\s*\(\s*isAuthenticated\(|await\s+requireSession\(/.test(text);
+  // The sign-in route is the one mutation that cannot require a session: it is
+  // where a session comes from. It authenticates the passphrase itself and must
+  // be rate limited instead, so it is exempt — but only that exact route.
+  const isCredentialRoute = rel(f) === 'api/session.js' && /checkPassphrase\(/.test(text) && /rateLimit\(/.test(text);
+  if (writes && !hasAuth && !gatesOnSession && !isCredentialRoute) {
     add('unauth-write', f, 1, 'handler accepts POST/PATCH/DELETE with no auth check',
       'Verify a session or signed token before mutating, and return 401 otherwise.');
   }
@@ -125,8 +134,19 @@ for (const f of files.filter((f) => f.endsWith('.html'))) {
 
 // --- G7: public note data reachable as a static file -------------------
 // Shipped: /data/notes.json served 25 notes with a cache HIT.
+// Deleting the file is not the only fix: keeping it in the tree but out of the
+// deployment (.vercelignore) also closes the leak, so honour that.
+const ignored = existsSync(join(ROOT, '.vercelignore'))
+  ? read(join(ROOT, '.vercelignore'))
+      .split('\n')
+      .map((line) => line.trim().replace(/^\//, '').replace(/\/$/, ''))
+      .filter((line) => line && !line.startsWith('#'))
+  : [];
+const ignoredByDeploy = (relPath) =>
+  ignored.some((entry) => relPath === entry || relPath.startsWith(`${entry}/`));
+
 if (existsSync(join(ROOT, 'data'))) {
-  const dataFiles = files.filter((f) => rel(f).startsWith('data/'));
+  const dataFiles = files.filter((f) => rel(f).startsWith('data/') && !ignoredByDeploy(rel(f)));
   if (dataFiles.length) {
     add('static-data', dataFiles[0], 1, `${dataFiles.length} file(s) under data/ are publicly served`,
       'Move the store behind the API (KV/Postgres/Blob) and delete data/*.json from the deploy.');

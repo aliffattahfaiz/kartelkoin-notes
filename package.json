@@ -1,0 +1,19 @@
+{
+  "name": "kartelkoin-notes",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A private, single-board notes ledger. Vercel Blob store, passphrase-gated, no framework.",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "guard": "node scripts/guard.mjs",
+    "guard:list": "node scripts/guard.mjs --list",
+    "test": "node scripts/test-api.js"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.8.2"
+  }
+}
