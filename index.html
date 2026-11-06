@@ -1,97 +1,104 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KartelKoin Notes</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex, nofollow">
+<title>KartelKoin Notes</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app-container">
-    <header class="header">
-      <h1 class="logo">
-        <span class="logo-mark" aria-hidden="true">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="14" cy="14" r="13.5" stroke="url(#coinGradient)" stroke-width="2.5"/>
-            <text x="14" y="19" text-anchor="middle" font-family="Archivo Black, sans-serif" font-size="14" font-weight="800" fill="url(#coinGradient)">K</text>
-            <defs>
-              <linearGradient id="coinGradient" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#F5B800"/>
-                <stop offset="50%" stop-color="#FFD700"/>
-                <stop offset="100%" stop-color="#B8860B"/>
-              </linearGradient>
-            </defs>
-          </svg>
-        </span>
-        KartelKoin Notes
-      </h1>
-    </header>
 
-    <main class="main-content">
-      <section class="composer-section">
-        <form id="composer-form" class="composer-form" aria-label="Create new note">
-          <div class="composer-header">
-            <input type="text" id="note-title" class="note-title-input" placeholder="Title (optional, max 120 chars)" aria-label="Note title" maxlength="120">
-          </div>
-          <textarea
-            id="note-editor"
-            class="note-editor"
-            placeholder="Write a note... (max 10,000 characters)"
-            aria-label="Note content"
-            spellcheck="true"
-            maxlength="10000"
-          ></textarea>
-          <div class="composer-footer">
-            <span id="char-count" class="char-count">0 characters</span>
-            <div class="composer-buttons">
-              <button type="button" id="new-btn" class="btn btn-secondary btn-sm">New</button>
-              <button type="submit" id="post-btn" class="btn btn-primary">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-                Save
-              </button>
-            </div>
-          </div>
-        </form>
-        <div id="error-banner" class="error-banner hidden" role="alert"></div>
-      </section>
+<div id="lock-screen" class="lock">
+  <form id="lock-form" class="lock-card" autocomplete="off">
+    <div class="lock-mark" aria-hidden="true">K</div>
+    <h1>KartelKoin Notes</h1>
+    <p class="lock-sub">This notebook is private. Enter the access key to continue.</p>
+    <label class="field">
+      <span class="field-label">Access key</span>
+      <input id="lock-key" type="password" name="key" spellcheck="false" autocapitalize="off" autocomplete="current-password" required>
+    </label>
+    <label class="check">
+      <input id="lock-remember" type="checkbox">
+      <span>Remember on this device</span>
+    </label>
+    <p id="lock-error" class="lock-error" role="alert" hidden></p>
+    <button type="submit" class="btn btn-primary" id="lock-submit">Unlock</button>
+    <p class="lock-foot">The key is checked on the server. Nothing is stored in this page.</p>
+  </form>
+</div>
 
-      <section class="notes-board-section">
-        <div class="notes-board-header">
-          <h2>All Notes</h2>
-          <div class="board-header-actions">
-            <span id="notes-count" class="notes-count">0 notes</span>
-            <button type="button" id="copy-all-btn" class="note-icon-btn copy-all-btn" aria-label="Copy all notes" title="Copy all notes">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </button>
-          </div>
+<div id="app" class="app" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">K</span>
+      <span class="brand-name">KartelKoin Notes</span>
+    </div>
+    <div class="topbar-actions">
+      <span id="sync-state" class="sync" role="status" aria-live="polite">Ready</span>
+      <button type="button" class="btn btn-quiet" id="refresh-btn" title="Reload notes (R)">Refresh</button>
+      <button type="button" class="btn btn-quiet" id="copy-all-btn" title="Copy every note as Markdown">Copy all</button>
+      <button type="button" class="btn btn-quiet" id="lock-btn" title="Forget the key on this device">Lock</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="rail" id="rail" aria-label="Notes">
+      <div class="rail-head">
+        <div class="search">
+          <input id="search" type="search" placeholder="Search notes" aria-label="Search notes" spellcheck="false">
+          <kbd>⌘K</kbd>
         </div>
-        <div id="notes-grid" class="notes-grid" role="list"></div>
-        <div id="loading-state" class="loading-state hidden" aria-live="polite">
-          <div class="spinner"></div>
-          <span>Loading notes...</span>
+        <button type="button" class="btn btn-primary btn-new" id="new-btn">New note</button>
+      </div>
+      <div class="rail-meta">
+        <span id="notes-count">0 notes</span>
+        <span id="filter-note" hidden></span>
+      </div>
+      <div id="note-list" class="note-list" role="listbox" aria-label="Note list" tabindex="0"></div>
+      <p id="list-empty" class="list-empty" hidden>No notes match.</p>
+    </aside>
+
+    <main class="editor-pane" aria-label="Editor">
+      <button type="button" class="btn btn-quiet back-btn" id="back-btn">All notes</button>
+
+      <div class="editor-head">
+        <input id="note-title" class="title-input" type="text" placeholder="Untitled" maxlength="120" aria-label="Note title" spellcheck="false">
+        <div class="editor-actions">
+          <span id="dirty-flag" class="dirty" hidden>Unsaved</span>
+          <button type="button" class="btn btn-quiet" id="copy-note-btn" title="Copy this note">Copy</button>
+          <button type="button" class="btn btn-danger" id="delete-btn" title="Delete this note">Delete</button>
+          <button type="submit" form="editor-form" class="btn btn-primary" id="save-btn">Save</button>
         </div>
-        <div id="empty-state" class="empty-state hidden">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
-            <line x1="16" y1="13" x2="8" y2="13"></line>
-            <line x1="16" y1="17" x2="8" y2="17"></line>
-            <polyline points="10 9 9 9 8 9"></polyline>
-          </svg>
-          <p>No notes yet</p>
-          <span>Be the first to post!</span>
-        </div>
-      </section>
+      </div>
+
+      <form id="editor-form" class="editor-body">
+        <textarea id="note-editor" class="editor" placeholder="Start writing…" maxlength="10000" spellcheck="true" aria-label="Note body"></textarea>
+      </form>
+
+      <footer class="editor-foot">
+        <span id="char-count">0 / 10,000</span>
+        <span id="saved-at"></span>
+        <span class="foot-hint"><kbd>⌘S</kbd> save <kbd>⌘⏎</kbd> save &amp; new</span>
+      </footer>
     </main>
   </div>
+</div>
 
-  <script src="lz-string.min.js"></script>
-  <script src="app.js"></script>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<div id="confirm" class="confirm" hidden>
+  <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+    <h2 id="confirm-title">Delete this note?</h2>
+    <p id="confirm-body" class="confirm-body"></p>
+    <div class="confirm-actions">
+      <button type="button" class="btn btn-quiet" id="confirm-cancel">Cancel</button>
+      <button type="button" class="btn btn-danger" id="confirm-ok">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>

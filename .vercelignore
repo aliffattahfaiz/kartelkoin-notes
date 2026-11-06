@@ -1,0 +1,10 @@
+# The notes store lives in git and is read through the GitHub API at runtime.
+# Serving it as a static file would publish every note to anyone with the URL.
+data/
+test/
+scripts/
+.git/
+.env
+.env.*
+!.env.example
+README.md

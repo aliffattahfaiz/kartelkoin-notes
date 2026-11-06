@@ -1,0 +1,13 @@
+{
+  "name": "kartelkoin-notes",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Private shared notebook backed by a git-tracked JSON file",
+  "scripts": {
+    "test": "node --test test/api.test.js",
+    "dev": "node test/dev-server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

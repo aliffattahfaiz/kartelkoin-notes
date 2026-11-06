@@ -1,61 +1,63 @@
 # KartelKoin Notes
 
-A zero-backend, privacy-first note-taking app where **everything lives in the URL**. Share a link, and the recipient gets the full note instantly — no server, no database, no account needed.
+A small private notebook. Notes are stored in this repository (`data/notes.json`)
+and read/written through one serverless function, so the store is never served
+as a static file.
 
-## Features
+## Access model
 
-- **URL-based persistence**: Notes are compressed with LZ-string and stored in the URL hash
-- **Zero backend**: Runs entirely in the browser — deploy anywhere static hosting works
-- **localStorage backup**: Your last session persists on reload
-- **Multiple notes**: History saved locally, one note per shareable link
-- **Rich editor**: Dark-themed, Markdown-friendly, responsive
-- **Copy link**: One-click shareable URLs
-- **Shared note banner**: Alerts recipients they're viewing a shared note
+- Every request, read included, needs the shared access key.
+- The key lives only in the `NOTES_WRITE_KEY` environment variable. It is
+  compared in constant time on the server; the browser keeps it in
+  `localStorage` only if "Remember on this device" is ticked, otherwise in
+  `sessionStorage`.
+- If `NOTES_WRITE_KEY` is unset or shorter than 16 characters the API returns
+  `503` for everything. It never falls open.
 
-## How It Works
+## Environment
 
-1. Type a note → content is compressed (LZ-string) → encoded into URL hash
-2. Share the URL → recipient opens it → note decompresses instantly from the hash
-3. localStorage keeps a local history of your notes for quick access
+| Variable | Required | Purpose |
+|---|---|---|
+| `GITHUB_REPO` | yes | `owner/repo` that holds `data/notes.json` |
+| `GITHUB_TOKEN` | yes | fine-grained token, Contents: read+write on that repo only |
+| `NOTES_WRITE_KEY` | yes | shared access key, 16+ characters (`openssl rand -base64 32`) |
 
-## Deploy to Vercel (via GitHub Import)
+Copy `.env.example` to `.env.local` for local work.
 
-1. Push this repo to GitHub
-2. Go to [vercel.com](https://vercel.com) → **Add New Project**
-3. Import your GitHub repository
-4. Vercel auto-detects static deployment — no config needed
-5. Click **Deploy** → done
-
-Your app will be live at `https://your-project.vercel.app`
-
-## Local Development
+## Local development
 
 ```bash
-# Serve locally (any static server works)
-npx serve .
-# or
-python3 -m http.server 8000
-# or
-php -S localhost:8000
+node test/dev-server.js          # http://localhost:4173, in-memory GitHub stub
+NOTES_WRITE_KEY=... node test/dev-server.js
 ```
 
-Open `http://localhost:8000` in your browser.
+The preview server never touches the real notes file; it seeds the stub from
+`data/notes.json` and discards writes on exit.
 
-## Tech Stack
+## Tests
 
-- Vanilla HTML/CSS/JS — no build step
-- [LZ-string](https://github.com/pieroxy/lz-string) for compression (via CDN)
-- localStorage for local history
-- CSS Grid/Flexbox for responsive layout
+```bash
+npm test
+```
 
-## Keyboard Shortcuts
+Twenty-five tests cover auth, fail-closed behaviour, validation, concurrent
+writes, CORS and caching. They run against a GitHub stub, so they need no
+network and no credentials.
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+S` | Save current note |
-| `Ctrl+Enter` | New note |
-| `Esc` | Blur editor |
+## Design notes
 
-## License
+- Two panes: note list on the left, editor on the right. Below 860px the list
+  and editor become separate views with a back button.
+- The editor never overwrites typing. A remote change is adopted only when the
+  open note is clean; otherwise the "Unsaved" badge stays and you decide.
+- Polling is every 15s and pauses while the tab is hidden or a save is in
+  flight. The server caches reads for 5s so several tabs cost one GitHub call.
+- `Ctrl/Cmd+S` saves, `Ctrl/Cmd+Enter` saves and starts a new note,
+  `Ctrl/Cmd+K` focuses search.
 
-MIT
+## Deploy
+
+Vercel picks this up as a static site plus one Node function. `data/` is listed
+in `.vercelignore`, so the notes file is never part of the public bundle.
+
+Set the three environment variables in the Vercel project before deploying.

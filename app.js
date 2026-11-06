@@ -1,354 +1,557 @@
-const API_URL = '/api/notes';
-const POLL_MS = 2000;
+'use strict';
 
-const elements = {
-  titleInput: document.getElementById('note-title'),
-  editor: document.getElementById('note-editor'),
-  charCount: document.getElementById('char-count'),
-  saveBtn: document.getElementById('post-btn'),
-  newBtn: document.getElementById('new-btn'),
-  composerForm: document.getElementById('composer-form'),
-  errorBanner: document.getElementById('error-banner'),
-  notesGrid: document.getElementById('notes-grid'),
-  notesCount: document.getElementById('notes-count'),
-  loadingState: document.getElementById('loading-state'),
-  emptyState: document.getElementById('empty-state'),
+const API = '/api/notes';
+const KEY_STORE = 'kk-notes-key';
+const POLL_MS = 15000;
+
+const $ = (id) => document.getElementById(id);
+
+const el = {
+  lock: $('lock-screen'),
+  lockForm: $('lock-form'),
+  lockKey: $('lock-key'),
+  lockRemember: $('lock-remember'),
+  lockError: $('lock-error'),
+  lockSubmit: $('lock-submit'),
+  app: $('app'),
+  rail: $('rail'),
+  list: $('note-list'),
+  listEmpty: $('list-empty'),
+  search: $('search'),
+  notesCount: $('notes-count'),
+  filterNote: $('filter-note'),
+  sync: $('sync-state'),
+  title: $('note-title'),
+  editor: $('note-editor'),
+  form: $('editor-form'),
+  charCount: $('char-count'),
+  savedAt: $('saved-at'),
+  dirty: $('dirty-flag'),
+  saveBtn: $('save-btn'),
+  deleteBtn: $('delete-btn'),
+  copyNoteBtn: $('copy-note-btn'),
+  copyAllBtn: $('copy-all-btn'),
+  refreshBtn: $('refresh-btn'),
+  lockBtn: $('lock-btn'),
+  newBtn: $('new-btn'),
+  backBtn: $('back-btn'),
+  toast: $('toast'),
+  confirm: $('confirm'),
+  confirmTitle: $('confirm-title'),
+  confirmBody: $('confirm-body'),
+  confirmOk: $('confirm-ok'),
+  confirmCancel: $('confirm-cancel'),
 };
 
-let notes = [];
-let lastRenderedSnapshot = null; // JSON snapshot of last rendered list — skip re-render if unchanged
-let currentId = null;      // id of the note open in the editor (null = new draft)
-let lastRemoteVersion = null; // { id, updatedAt } of the open note as last seen remotely
-let isSubmitting = false;
-let firstLoadDone = false;
+const state = {
+  key: null,
+  notes: [],
+  query: '',
+  currentId: null,
+  dirty: false,
+  saving: false,
+  poll: null,
+  known: new Map(), // id -> updatedAt|createdAt, to spot remote changes
+};
 
-function formatDate(isoString) {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now - date;
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
+/* ---------------- storage & key handling ---------------- */
 
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function truncateText(text, maxLength = 300) {
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength).trim() + '…';
-}
-
-function createNoteCard(note) {
-  const article = document.createElement('article');
-  article.className = `note-card${note.id === currentId ? ' current-note' : ''}`;
-  article.dataset.id = note.id;
-
-  const shortContent = truncateText(note.content);
-  const hasMore = note.content.length > 300;
-
-  article.innerHTML = `
-    <header class="note-card-header">
-      <div class="note-card-heading">
-        <h3 class="note-card-title">${escapeHtml(note.title)}</h3>
-        <div class="note-card-tools">
-          <time class="note-card-time" datetime="${note.createdAt}">${formatDate(note.updatedAt || note.createdAt)}</time>
-          <button class="note-icon-btn copy-btn" data-action="copy" aria-label="Copy body text" title="Copy body text">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-          <button class="note-icon-btn delete-btn" data-action="delete" aria-label="Delete note" title="Delete note">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          </button>
-        </div>
-      </div>
-    </header>
-    <div class="note-card-content">${escapeHtml(shortContent)}</div>
-    ${hasMore ? `<button class="note-card-expand" data-action="expand" aria-label="Show full note">Show more</button>` : ''}
-    <div class="note-card-open-hint">Click to open & edit</div>
-  `;
-
-  // Clicking anywhere on the card opens it in the main editor,
-  // EXCEPT when clicking a tool icon (copy/delete) or expand
-  article.addEventListener('click', (e) => {
-    if (e.target.closest('.note-icon-btn')) return;
-    if (e.target.closest('.note-card-expand')) return;
-    openNote(note.id);
-  });
-
-  const expandBtn = article.querySelector('.note-card-expand');
-  if (expandBtn) {
-    expandBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      article.querySelector('.note-card-content').textContent = note.content;
-      expandBtn.remove();
-      article.classList.add('expanded');
-    });
+function readStoredKey() {
+  try {
+    const persistent = localStorage.getItem(KEY_STORE);
+    if (persistent) return { key: persistent, remember: true };
+    const session = sessionStorage.getItem(KEY_STORE);
+    if (session) return { key: session, remember: false };
+  } catch (err) {
+    /* storage unavailable */
   }
-  article.querySelector('.copy-btn').addEventListener('click', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    copyNote(note).then((ok) => {
-      if (ok) {
-        // Highlight the card briefly instead of showing a toast
-        article.classList.add('copied-flash');
-        const btn = article.querySelector('.copy-btn');
-        btn.classList.add('copied');
-        setTimeout(() => {
-          article.classList.remove('copied-flash');
-          btn.classList.remove('copied');
-        }, 1200);
-      }
-    });
-  });
-  article.querySelector('.delete-btn').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); deleteNote(note); });
-
-  return article;
+  return null;
 }
 
-function renderNotes() {
-  // Skip DOM rebuild when nothing changed — prevents flicker from polling
-  const snapshot = JSON.stringify([notes, currentId]);
-  if (snapshot === lastRenderedSnapshot) return;
-  lastRenderedSnapshot = snapshot;
+function storeKey(key, remember) {
+  try {
+    localStorage.removeItem(KEY_STORE);
+    sessionStorage.removeItem(KEY_STORE);
+    (remember ? localStorage : sessionStorage).setItem(KEY_STORE, key);
+  } catch (err) {
+    /* private mode: keep it in memory only */
+  }
+}
 
-  elements.notesGrid.innerHTML = '';
-  elements.notesCount.textContent = `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
+function clearKey() {
+  try {
+    localStorage.removeItem(KEY_STORE);
+    sessionStorage.removeItem(KEY_STORE);
+  } catch (err) {
+    /* ignore */
+  }
+  state.key = null;
+}
 
-  if (notes.length === 0) {
-    elements.emptyState.classList.remove('hidden');
-    return;
+/* ---------------- transport ---------------- */
+
+async function api(method, body) {
+  const headers = { 'X-Notes-Key': state.key };
+  const init = { method, headers, cache: 'no-store' };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
   }
 
-  elements.emptyState.classList.add('hidden');
+  const res = await fetch(API, init);
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (err) {
+    data = null;
+  }
 
-  const fragment = document.createDocumentFragment();
-  notes.forEach(note => fragment.appendChild(createNoteCard(note)));
-  elements.notesGrid.appendChild(fragment);
+  if (res.status === 401) {
+    lock('Your key is no longer valid.');
+    throw new Error('Unauthorised');
+  }
+  if (res.status === 503) {
+    throw new Error('This notebook is not configured on the server yet.');
+  }
+  if (!res.ok) {
+    throw new Error((data && data.error) || `Request failed (${res.status})`);
+  }
+  return data || {};
 }
 
-function showLoading(show) {
-  elements.loadingState.classList.toggle('hidden', !show);
-  elements.notesGrid.classList.toggle('hidden', show);
-}
+/* ---------------- small UI helpers ---------------- */
 
-function showError(message) {
-  elements.errorBanner.textContent = message;
-  elements.errorBanner.classList.remove('hidden');
-  setTimeout(() => elements.errorBanner.classList.add('hidden'), 4000);
-}
-
+let toastTimer = null;
 function toast(message) {
-  showError(message);
+  el.toast.textContent = message;
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, 2600);
 }
 
-function updateCharCount() {
-  const count = elements.editor.value.length;
-  elements.charCount.textContent = `${count.toLocaleString()} / 10,000 characters`;
+function setSync(text, tone) {
+  el.sync.textContent = text;
+  el.sync.dataset.tone = tone || '';
 }
 
-function setEditorFor(note) {
-  currentId = note ? note.id : null;
-  lastRemoteVersion = note ? { id: note.id, updatedAt: note.updatedAt || note.createdAt } : null;
-  elements.titleInput.value = note ? note.title : '';
-  elements.editor.value = note ? note.content : '';
-  updateCharCount();
-  elements.saveBtn.innerHTML = note
-    ? 'Save'
-    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Save`;
-  renderNotes();
-  elements.titleInput.focus();
+function formatDate(iso) {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+  if (mins < 10080) return `${Math.floor(mins / 1440)}d ago`;
+  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
+
+function stampOf(note) {
+  return note.updatedAt || note.createdAt || '';
+}
+
+function markDirty(dirty) {
+  state.dirty = dirty;
+  el.dirty.hidden = !dirty;
+  el.saveBtn.disabled = state.saving;
+}
+
+/* ---------------- rendering ---------------- */
+
+function visibleNotes() {
+  const q = state.query.trim().toLowerCase();
+  if (!q) return state.notes;
+  return state.notes.filter((n) =>
+    (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q)
+  );
+}
+
+function renderList() {
+  const items = visibleNotes();
+  el.notesCount.textContent = `${state.notes.length} note${state.notes.length === 1 ? '' : 's'}`;
+  el.filterNote.hidden = !state.query;
+  el.filterNote.textContent = state.query ? `${items.length} match${items.length === 1 ? '' : 'es'}` : '';
+  el.listEmpty.hidden = items.length > 0;
+
+  const frag = document.createDocumentFragment();
+  for (const note of items) {
+    const row = document.createElement('div');
+    row.className = 'note-row';
+    row.setAttribute('role', 'option');
+    row.dataset.id = note.id;
+    row.tabIndex = -1;
+    if (note.id === state.currentId) {
+      row.classList.add('is-active');
+      row.setAttribute('aria-selected', 'true');
+    }
+
+    const title = document.createElement('div');
+    title.className = 'note-row-title';
+    title.textContent = note.title || 'Untitled';
+
+    const preview = document.createElement('div');
+    preview.className = 'note-row-preview';
+    preview.textContent = (note.content || '').replace(/\s+/g, ' ').slice(0, 110);
+
+    const meta = document.createElement('div');
+    meta.className = 'note-row-meta';
+    meta.textContent = formatDate(stampOf(note));
+
+    row.append(title, preview, meta);
+    row.addEventListener('click', () => openNote(note.id));
+    frag.appendChild(row);
+  }
+
+  el.list.replaceChildren(frag);
+}
+
+function renderEditor() {
+  const note = state.notes.find((n) => n.id === state.currentId) || null;
+  el.deleteBtn.disabled = !note;
+  el.copyNoteBtn.disabled = !note;
+  el.savedAt.textContent = note ? `saved ${formatDate(stampOf(note))}` : 'not saved yet';
+  updateCount();
+}
+
+function updateCount() {
+  const n = el.editor.value.length;
+  el.charCount.textContent = `${n.toLocaleString()} / 10,000`;
+  el.charCount.dataset.warn = n > 9500 ? 'high' : '';
+}
+
+/* ---------------- data flow ---------------- */
+
+function mergeFromServer(notes, { announce } = {}) {
+  const previous = state.known;
+  const changed = [];
+  const next = new Map();
+
+  for (const note of notes) {
+    const stamp = stampOf(note);
+    next.set(note.id, stamp);
+    if (previous.has(note.id) && previous.get(note.id) !== stamp) changed.push(note);
+  }
+  const removed = [...previous.keys()].filter((id) => !next.has(id));
+
+  state.notes = notes;
+  state.known = next;
+
+  if (announce && (changed.length || removed.length) && !state.dirty) {
+    setSync('Updated elsewhere', 'warn');
+  } else if (announce) {
+    setSync('Up to date', 'ok');
+  }
+
+  // Adopt a remote edit only when the open note is clean; never clobber typing.
+  if (!state.dirty && state.currentId) {
+    const remote = notes.find((n) => n.id === state.currentId);
+    if (remote) {
+      el.title.value = remote.title || '';
+      el.editor.value = remote.content || '';
+      updateCount();
+    } else {
+      startNew({ focus: false });
+    }
+  }
+
+  renderList();
+  renderEditor();
+}
+
+async function load({ announce = false, quiet = false } = {}) {
+  if (!quiet) setSync('Loading…');
+  try {
+    const data = await api('GET');
+    mergeFromServer(data.notes || [], { announce });
+    if (data.stale) setSync('Showing last known copy', 'warn');
+    else if (!announce) setSync('Up to date', 'ok');
+  } catch (err) {
+    if (err.message === 'Unauthorised') return;
+    setSync('Offline', 'bad');
+    if (!quiet) toast(err.message);
+  }
+}
+
+/* ---------------- actions ---------------- */
 
 function openNote(id) {
-  const note = notes.find(n => n.id === id);
+  if (state.dirty && !confirmDiscard()) return;
+  const note = state.notes.find((n) => n.id === id);
   if (!note) return;
-  setEditorFor(note);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  state.currentId = id;
+  el.title.value = note.title || '';
+  el.editor.value = note.content || '';
+  markDirty(false);
+  renderList();
+  renderEditor();
+  el.app.classList.add('has-selection');
+  el.editor.focus();
 }
 
-function startNewDraft() {
-  setEditorFor(null);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+function startNew({ focus = true } = {}) {
+  if (state.dirty && focus && !confirmDiscard()) return;
+  state.currentId = null;
+  el.title.value = '';
+  el.editor.value = '';
+  markDirty(false);
+  renderList();
+  renderEditor();
+  el.app.classList.add('has-selection');
+  if (focus) el.title.focus();
 }
 
-async function fetchNotes(showSpinner = true) {
-  if (showSpinner && !firstLoadDone) showLoading(true);
-  try {
-    const response = await fetch(API_URL, { cache: 'no-store' });
-    if (!response.ok) throw new Error('Failed to load notes');
-    const data = await response.json();
-    notes = data.notes || [];
-
-    // Live sync for the note open in the editor:
-    // adopt remote changes only if the user isn't actively typing in it.
-    if (currentId) {
-      const remote = notes.find(n => n.id === currentId);
-      const localStamp = lastRemoteVersion && lastRemoteVersion.id === currentId ? lastRemoteVersion.updatedAt : null;
-      const remoteStamp = remote ? (remote.updatedAt || remote.createdAt) : null;
-      const remoteChanged = remoteStamp && localStamp && remoteStamp !== localStamp;
-      const editorTouched =
-        elements.titleInput.value !== '' || elements.editor.value !== '';
-
-      if (remoteChanged && !editorTouched) {
-        elements.titleInput.value = remote.title;
-        elements.editor.value = remote.content;
-        updateCharCount();
-        lastRemoteVersion = { id: remote.id, updatedAt: remoteStamp };
-      } else if (!remoteChanged && lastRemoteVersion === null && remote) {
-        lastRemoteVersion = { id: remote.id, updatedAt: remoteStamp };
-      }
-    }
-
-    renderNotes();
-    firstLoadDone = true;
-  } catch (err) {
-    console.error('Fetch notes error:', err);
-    if (showSpinner) showError('Failed to load notes. Retrying…');
-  } finally {
-    if (showSpinner && !firstLoadDone) showLoading(false);
-  }
+function confirmDiscard() {
+  return window.confirm('You have unsaved changes. Discard them?');
 }
 
-async function saveCurrent() {
-  if (isSubmitting) return;
-  const title = elements.titleInput.value.trim();
-  const content = elements.editor.value.trim();
+async function save({ thenNew = false } = {}) {
+  if (state.saving) return;
+  const title = el.title.value.trim();
+  const content = el.editor.value;
 
-  if (!content) {
-    showError('Write something before saving');
-    elements.editor.focus();
+  if (!content.trim()) {
+    toast('Write something first');
+    el.editor.focus();
     return;
   }
 
-  isSubmitting = true;
-  elements.saveBtn.disabled = true;
+  state.saving = true;
+  el.saveBtn.disabled = true;
+  el.saveBtn.textContent = 'Saving…';
+  setSync('Saving…');
+
   try {
-    let response;
-    if (currentId) {
-      response = await fetch(API_URL, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: currentId, title, content })
-      });
-    } else {
-      response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, content })
-      });
+    const data = state.currentId
+      ? await api('PATCH', { id: state.currentId, title, content })
+      : await api('POST', { title, content });
+
+    const saved = data.note;
+    if (saved) {
+      state.notes = [saved, ...state.notes.filter((n) => n.id !== saved.id)];
+      state.known.set(saved.id, stampOf(saved));
+      state.currentId = saved.id;
+      markDirty(false);
+      renderList();
+      renderEditor();
+      el.app.classList.add('has-selection');
     }
 
-    if (response.status === 429) throw new Error('Rate limited. Please wait.');
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || 'Failed to save note');
-    }
-
-    const data = await response.json();
-
-    if (data.note) {
-      // Optimistic: put the saved version at the top of the list
-      notes = notes.filter(n => n.id !== data.note.id);
-      notes.unshift(data.note);
-      currentId = data.note.id;
-      lastRemoteVersion = { id: data.note.id, updatedAt: data.note.updatedAt || data.note.createdAt };
-    }
-
-    renderNotes();
-    toast(currentId ? 'Saved ✓' : 'Saved ✓');
+    setSync('Saved', 'ok');
+    toast('Saved');
+    if (thenNew) startNew();
   } catch (err) {
-    console.error('Save error:', err);
-    showError(err.message);
+    if (err.message !== 'Unauthorised') {
+      setSync('Save failed', 'bad');
+      toast(err.message);
+    }
   } finally {
-    isSubmitting = false;
-    elements.saveBtn.disabled = false;
+    state.saving = false;
+    el.saveBtn.disabled = false;
+    el.saveBtn.textContent = 'Save';
   }
 }
 
-async function copyNote(note) {
+function askConfirm(title, body) {
+  return new Promise((resolve) => {
+    el.confirmTitle.textContent = title;
+    el.confirmBody.textContent = body;
+    el.confirm.hidden = false;
+
+    const done = (value) => {
+      el.confirm.hidden = true;
+      el.confirmOk.removeEventListener('click', onOk);
+      el.confirmCancel.removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKey, true);
+      resolve(value);
+    };
+    const onOk = () => done(true);
+    const onCancel = () => done(false);
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); done(false); }
+      if (e.key === 'Enter') { e.stopPropagation(); done(false); }
+    };
+
+    el.confirmOk.addEventListener('click', onOk);
+    el.confirmCancel.addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKey, true);
+    el.confirmCancel.focus();
+  });
+}
+
+async function removeCurrent() {
+  const note = state.notes.find((n) => n.id === state.currentId);
+  if (!note) return;
+
+  const ok = await askConfirm(
+    'Delete this note?',
+    `“${note.title || 'Untitled'}” is removed for everyone. This cannot be undone.`
+  );
+  if (!ok) return;
+
   try {
-    await navigator.clipboard.writeText(note.content);
-    return true;
+    await api('DELETE', { id: note.id });
+    state.notes = state.notes.filter((n) => n.id !== note.id);
+    state.known.delete(note.id);
+    startNew({ focus: false });
+    setSync('Deleted', 'ok');
+    toast('Note deleted');
   } catch (err) {
-    console.error('Copy error:', err);
-    showError('Failed to copy note');
-    return false;
+    if (err.message !== 'Unauthorised') toast(err.message);
   }
 }
 
-async function deleteNote(note) {
-  if (!confirm(`Delete "${note.title}"? This cannot be undone.`)) return;
+async function copy(text, label) {
   try {
-    const response = await fetch(API_URL, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: note.id })
-    });
-    if (!response.ok && response.status !== 404) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || 'Failed to delete note');
-    }
-    notes = notes.filter(n => n.id !== note.id);
-    if (currentId === note.id) startNewDraft();
-    renderNotes();
-    toast('Deleted');
+    await navigator.clipboard.writeText(text);
+    toast(label);
   } catch (err) {
-    console.error('Delete note error:', err);
-    showError(err.message);
+    toast('Clipboard blocked by the browser');
   }
 }
 
-async function copyAllNotes() {
-  if (notes.length === 0) {
-    showError('No notes to copy');
+function copyCurrent() {
+  const note = state.notes.find((n) => n.id === state.currentId);
+  if (!note) return;
+  copy(note.content, 'Note copied');
+}
+
+function copyAll() {
+  if (!state.notes.length) {
+    toast('No notes to copy');
     return;
   }
-  const text = notes
-    .map(n => `## ${n.title}\n\n${n.content}`)
-    .join('\n\n---\n\n');
+  const body = state.notes.map((n) => `## ${n.title || 'Untitled'}\n\n${n.content}`).join('\n\n---\n\n');
+  copy(`# KartelKoin Notes (${state.notes.length})\n\n${body}`, `${state.notes.length} notes copied`);
+}
+
+function lock(message) {
+  clearKey();
+  stopPolling();
+  state.notes = [];
+  state.known.clear();
+  state.currentId = null;
+  state.dirty = false;
+  el.app.hidden = true;
+  el.lock.hidden = false;
+  el.lockError.textContent = message || '';
+  el.lockError.hidden = !message;
+  el.lockKey.value = '';
+  el.lockKey.focus();
+}
+
+async function unlock(key, remember) {
+  state.key = key;
+  el.lockSubmit.disabled = true;
+  el.lockSubmit.textContent = 'Checking…';
+  el.lockError.hidden = true;
+
   try {
-    await navigator.clipboard.writeText(`# KartelKoin Notes (${notes.length} notes)\n\n${text}`);
-    toast(`${notes.length} notes copied to clipboard`);
+    const data = await api('GET');
+    storeKey(key, remember);
+    el.lockRemember.checked = remember;
+    el.lock.hidden = true;
+    el.app.hidden = false;
+    mergeFromServer(data.notes || []);
+    setSync('Up to date', 'ok');
+    startPolling();
+    if (state.notes.length) openNote(state.notes[0].id);
+    else startNew();
   } catch (err) {
-    console.error('Copy all error:', err);
-    showError('Failed to copy notes');
+    state.key = null;
+    el.lockError.textContent = err.message === 'Unauthorised'
+      ? 'That key was not accepted.'
+      : err.message;
+    el.lockError.hidden = false;
+    el.lockKey.select();
+  } finally {
+    el.lockSubmit.disabled = false;
+    el.lockSubmit.textContent = 'Unlock';
   }
 }
 
-// Ctrl/Cmd+S saves the working note
-function handleKeydown(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+/* ---------------- polling ---------------- */
+
+function startPolling() {
+  stopPolling();
+  state.poll = setInterval(() => {
+    if (document.hidden || state.saving || state.dirty) return;
+    load({ announce: true, quiet: true });
+  }, POLL_MS);
+}
+
+function stopPolling() {
+  if (state.poll) clearInterval(state.poll);
+  state.poll = null;
+}
+
+/* ---------------- wiring ---------------- */
+
+el.lockForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const key = el.lockKey.value.trim();
+  if (!key) return;
+  unlock(key, el.lockRemember.checked);
+});
+
+el.form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  save();
+});
+
+el.title.addEventListener('input', () => markDirty(true));
+el.editor.addEventListener('input', () => { updateCount(); markDirty(true); });
+
+el.newBtn.addEventListener('click', () => startNew());
+el.refreshBtn.addEventListener('click', () => load({ announce: true }));
+el.copyAllBtn.addEventListener('click', copyAll);
+el.copyNoteBtn.addEventListener('click', copyCurrent);
+el.deleteBtn.addEventListener('click', removeCurrent);
+el.lockBtn.addEventListener('click', () => lock());
+el.backBtn.addEventListener('click', () => el.app.classList.remove('has-selection'));
+
+el.search.addEventListener('input', () => {
+  state.query = el.search.value;
+  renderList();
+});
+
+document.addEventListener('keydown', (e) => {
+  const meta = e.metaKey || e.ctrlKey;
+  if (meta && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    saveCurrent();
+    if (!el.app.hidden) save();
+  } else if (meta && e.key === 'Enter') {
+    e.preventDefault();
+    if (!el.app.hidden) save({ thenNew: true });
+  } else if (meta && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (!el.app.hidden) el.search.focus();
+  } else if (e.key === 'Escape') {
+    if (document.activeElement === el.search) {
+      el.search.value = '';
+      state.query = '';
+      renderList();
+      el.search.blur();
+    }
   }
-}
+});
 
-// Live streaming: poll for remote changes
-setInterval(() => fetchNotes(false), POLL_MS);
+window.addEventListener('beforeunload', (e) => {
+  if (!state.dirty) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
 
-function init() {
-  updateCharCount();
-  fetchNotes();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && state.key) load({ quiet: true });
+});
 
-  elements.editor.addEventListener('input', updateCharCount);
-  elements.composerForm.addEventListener('submit', (e) => { e.preventDefault(); saveCurrent(); });
-  elements.saveBtn.addEventListener('click', (e) => { e.preventDefault(); saveCurrent(); });
-  if (elements.newBtn) elements.newBtn.addEventListener('click', startNewDraft);
-  const copyAllBtn = document.getElementById('copy-all-btn');
-  if (copyAllBtn) copyAllBtn.addEventListener('click', copyAllNotes);
-  document.addEventListener('keydown', handleKeydown);
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+(function boot() {
+  const stored = readStoredKey();
+  if (stored) {
+    el.lockRemember.checked = stored.remember;
+    unlock(stored.key, stored.remember);
+  } else {
+    el.lock.hidden = false;
+    el.lockKey.focus();
+  }
+})();
