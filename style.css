@@ -506,6 +506,18 @@ kbd {
   animation: rise 180ms var(--ease);
 }
 
+.toast[data-tone="ok"] {
+  border-color: #35503b;
+  background: #16211a;
+  color: #cfe6d4;
+}
+
+.toast[data-tone="error"] {
+  border-color: #5a2f28;
+  background: #241613;
+  color: #f2cdc4;
+}
+
 @keyframes rise {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to { opacity: 1; transform: translate(-50%, 0); }
@@ -556,7 +568,7 @@ kbd {
 
   .back-btn { display: inline-flex; }
   .editor-head { padding: 10px 16px; flex-wrap: wrap; }
-  .title-input { font-size: 19px; flex-basis: 100%; }
+  .title-input { font-size: 19px; flex-basis: 100%; height: 44px; }
   .editor-body { padding: 14px 16px; }
   .editor-foot { padding: 8px 16px; }
   .foot-hint { display: none; }

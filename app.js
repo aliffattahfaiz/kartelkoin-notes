@@ -122,8 +122,9 @@ async function api(method, body) {
 /* ---------------- small UI helpers ---------------- */
 
 let toastTimer = null;
-function toast(message) {
+function toast(message, tone = 'ok') {
   el.toast.textContent = message;
+  el.toast.dataset.tone = tone;
   el.toast.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.toast.hidden = true; }, 2600);
@@ -132,6 +133,16 @@ function toast(message) {
 function setSync(text, tone) {
   el.sync.textContent = text;
   el.sync.dataset.tone = tone || '';
+}
+
+// A note with no title still needs a name in the list. Derive one from the
+// first line of the body instead of showing 36 rows called "Untitled".
+function displayTitle(note) {
+  const title = (note.title || '').trim();
+  if (title && title.toLowerCase() !== 'untitled') return title;
+  const first = (note.content || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+  if (!first) return 'Empty note';
+  return first.length > 60 ? `${first.slice(0, 57).trimEnd()}…` : first;
 }
 
 function formatDate(iso) {
@@ -187,7 +198,7 @@ function renderList() {
 
     const title = document.createElement('div');
     title.className = 'note-row-title';
-    title.textContent = note.title || 'Untitled';
+    title.textContent = displayTitle(note);
 
     const preview = document.createElement('div');
     preview.className = 'note-row-preview';
@@ -268,14 +279,14 @@ async function load({ announce = false, quiet = false } = {}) {
   } catch (err) {
     if (err.message === 'Unauthorised') return;
     setSync('Offline', 'bad');
-    if (!quiet) toast(err.message);
+    if (!quiet) toast(err.message, 'error');
   }
 }
 
 /* ---------------- actions ---------------- */
 
-function openNote(id) {
-  if (state.dirty && !confirmDiscard()) return;
+async function openNote(id) {
+  if (state.dirty && !(await confirmDiscard())) return;
   const note = state.notes.find((n) => n.id === id);
   if (!note) return;
   state.currentId = id;
@@ -288,8 +299,8 @@ function openNote(id) {
   el.editor.focus();
 }
 
-function startNew({ focus = true } = {}) {
-  if (state.dirty && focus && !confirmDiscard()) return;
+async function startNew({ focus = true } = {}) {
+  if (state.dirty && focus && !(await confirmDiscard())) return;
   state.currentId = null;
   el.title.value = '';
   el.editor.value = '';
@@ -301,7 +312,10 @@ function startNew({ focus = true } = {}) {
 }
 
 function confirmDiscard() {
-  return window.confirm('You have unsaved changes. Discard them?');
+  return askConfirm(
+    'Discard unsaved changes?',
+    'This note has edits that are not saved yet. They will be lost.'
+  );
 }
 
 async function save({ thenNew = false } = {}) {
@@ -310,7 +324,7 @@ async function save({ thenNew = false } = {}) {
   const content = el.editor.value;
 
   if (!content.trim()) {
-    toast('Write something first');
+    toast('Write something first', 'error');
     el.editor.focus();
     return;
   }
@@ -342,7 +356,7 @@ async function save({ thenNew = false } = {}) {
   } catch (err) {
     if (err.message !== 'Unauthorised') {
       setSync('Save failed', 'bad');
-      toast(err.message);
+      toast(err.message, 'error');
     }
   } finally {
     state.saving = false;
@@ -384,7 +398,7 @@ async function removeCurrent() {
 
   const ok = await askConfirm(
     'Delete this note?',
-    `“${note.title || 'Untitled'}” is removed for everyone. This cannot be undone.`
+    `“${displayTitle(note)}” is removed for everyone. This cannot be undone.`
   );
   if (!ok) return;
 
@@ -396,7 +410,7 @@ async function removeCurrent() {
     setSync('Deleted', 'ok');
     toast('Note deleted');
   } catch (err) {
-    if (err.message !== 'Unauthorised') toast(err.message);
+    if (err.message !== 'Unauthorised') toast(err.message, 'error');
   }
 }
 
@@ -420,7 +434,7 @@ function copyAll() {
     toast('No notes to copy');
     return;
   }
-  const body = state.notes.map((n) => `## ${n.title || 'Untitled'}\n\n${n.content}`).join('\n\n---\n\n');
+  const body = state.notes.map((n) => `## ${displayTitle(n)}\n\n${n.content}`).join('\n\n---\n\n');
   copy(`# KartelKoin Notes (${state.notes.length})\n\n${body}`, `${state.notes.length} notes copied`);
 }
 

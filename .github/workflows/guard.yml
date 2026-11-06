@@ -1,0 +1,32 @@
+name: guard
+
+# The notes app deploys straight from main with no tests and no branch
+# protection, so a regression reaches production in the same minute it is
+# pushed. This job is the only thing standing between a PR and main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Regression guard
+        run: node scripts/guard.mjs
+
+      - name: API tests
+        run: npm test
+
+      # data/ already contains credential-shaped notes; that is recorded in the
+      # baseline so this job is green today. The guard fails only on a *new*
+      # one, which is the behaviour we want while the purge is pending.
