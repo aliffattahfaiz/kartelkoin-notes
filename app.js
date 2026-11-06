@@ -142,6 +142,10 @@ function notify(message, options = {}) {
   close.addEventListener('click', () => dismissToast(node));
   node.appendChild(close);
 
+  // Two saves in a row used to stack identical notices; one is enough.
+  for (const existing of [...region.children]) {
+    if (existing.querySelector('.toast-text')?.textContent === message) existing.remove();
+  }
   region.appendChild(node);
 
   if (options.tone !== 'error' && !options.sticky) {
