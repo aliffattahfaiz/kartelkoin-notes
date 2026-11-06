@@ -34,7 +34,7 @@
   <!-- Gate: nothing below this is rendered until the PIN or passphrase is
        accepted. -->
   <main id="gate" class="gate" hidden>
-    <form id="gate-form" class="gate-card" autocomplete="off">
+    <form id="gate-form" class="gate-card" autocomplete="off" novalidate>
       <h1 class="gate-title">This board is private</h1>
       <p class="gate-lede" id="gate-lede">
         Enter your PIN or passphrase. It is exchanged for a signed cookie, so it
@@ -55,7 +55,7 @@
     <!-- The credential is set here, by whoever holds it, so no agent or admin
          ever needs to see it. Requires the current one, and signs out every
          other device. -->
-    <form id="change-form" class="gate-card gate-card-secondary" autocomplete="off" hidden>
+    <form id="change-form" class="gate-card gate-card-secondary" autocomplete="off" novalidate hidden>
       <h2 class="gate-title gate-title-small">Change the PIN or passphrase</h2>
       <p class="gate-lede">
         Enter the current one, then choose what replaces it. Every other device

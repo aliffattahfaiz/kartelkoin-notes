@@ -882,7 +882,12 @@ function bindEvents() {
   el.gateForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const value = el.gatePassphrase.value;
-    if (!value) return;
+    if (!value) {
+      el.gateError.textContent = 'Enter your PIN or passphrase.';
+      el.gateError.hidden = false;
+      el.gatePassphrase.focus();
+      return;
+    }
 
     el.gateSubmit.disabled = true;
     el.gateSubmit.textContent = 'Unlocking…';
