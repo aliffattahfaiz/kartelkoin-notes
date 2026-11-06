@@ -1,5 +1,11 @@
 [
   {
+    "id": "mw4glnjw",
+    "title": "<img src=x onerror=alert(1)>",
+    "content": "xss-title-probe",
+    "createdAt": "2026-11-06T04:13:13.724Z"
+  },
+  {
     "id": "mw4gl9fo",
     "title": "QA-AUDIT note",
     "content": "audit body 1793938374634",
