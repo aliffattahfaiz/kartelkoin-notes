@@ -1,5 +1,11 @@
 [
   {
+    "id": "mw4g64p3",
+    "title": "QA XSS probe",
+    "content": "<img src=x onerror=\"window.__xss=1\">",
+    "createdAt": "2026-11-06T04:01:09.447Z"
+  },
+  {
     "id": "mw4g5pkk",
     "title": "QA TEST delete me",
     "content": "QA test note body - safe to delete.",
