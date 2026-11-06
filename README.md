@@ -1,60 +1,66 @@
 # KartelKoin Notes
 
-A zero-backend, privacy-first note-taking app where **everything lives in the URL**. Share a link, and the recipient gets the full note instantly — no server, no database, no account needed.
+A single-page note board. Notes are stored as one JSON file in this repository and
+written back through a Vercel serverless function (`api/notes.js`) that commits to
+GitHub.
 
-## Features
+Live: https://notes.kartelkoin.xyz/
 
-- **URL-based persistence**: Notes are compressed with LZ-string and stored in the URL hash
-- **Zero backend**: Runs entirely in the browser — deploy anywhere static hosting works
-- **localStorage backup**: Your last session persists on reload
-- **Multiple notes**: History saved locally, one note per shareable link
-- **Rich editor**: Dark-themed, Markdown-friendly, responsive
-- **Copy link**: One-click shareable URLs
-- **Shared note banner**: Alerts recipients they're viewing a shared note
+## Status
 
-## How It Works
+The app is functional but not yet safe to expose as a public board. It has no
+caller authentication, allows any origin, serves its data file statically, and its
+`data/notes.json` currently holds credential-shaped notes. See
+[REVAMP.md](REVAMP.md) for the ranked list and the owner actions that must happen
+before any of the code fixes land.
 
-1. Type a note → content is compressed (LZ-string) → encoded into URL hash
-2. Share the URL → recipient opens it → note decompresses instantly from the hash
-3. localStorage keeps a local history of your notes for quick access
+## Layout
 
-## Deploy to Vercel (via GitHub Import)
+| Path | Purpose |
+|------|---------|
+| `index.html` | Markup: composer, board, loading and empty states |
+| `style.css` | All styling, including the responsive breakpoints |
+| `app.js` | Board rendering, editor, save/delete, polling |
+| `api/notes.js` | GET/POST/PATCH/DELETE over `data/notes.json` via the GitHub API |
+| `data/notes.json` | The note store (committed, therefore public) |
+| `REVAMP.md` | Ranked revamp plan, owner actions, acceptance checks |
+| `scripts/guard.mjs` | Regression guard — see below |
+| `.github/workflows/guard.yml` | Runs the guard on every PR and push to `main` |
 
-1. Push this repo to GitHub
-2. Go to [vercel.com](https://vercel.com) → **Add New Project**
-3. Import your GitHub repository
-4. Vercel auto-detects static deployment — no config needed
-5. Click **Deploy** → done
+## The guard
 
-Your app will be live at `https://your-project.vercel.app`
-
-## Local Development
+`scripts/guard.mjs` encodes defects that already shipped once, so they cannot
+come back unnoticed. It is a ratchet: `scripts/guard-baseline.json` records the
+defects that exist today, so CI is green now and fails only on a **new**
+instance.
 
 ```bash
-# Serve locally (any static server works)
-npx serve .
-# or
-python3 -m http.server 8000
-# or
-php -S localhost:8000
+node scripts/guard.mjs          # compare against baseline; exit 1 on new findings
+node scripts/guard.mjs --list   # print every finding, ignore the baseline
+node scripts/guard.mjs --update # rewrite the baseline from the current tree
 ```
 
-Open `http://localhost:8000` in your browser.
+Checks: wildcard CORS, unauthenticated write handlers, missing CSP / nosniff /
+frame-ancestors / referrer policy, `.hidden` used without a CSS rule, success
+messages routed through the error banner, third-party assets without an integrity
+hash, static files under `data/`, and credential-shaped content in the note store.
 
-## Tech Stack
+When you fix something, run `--update` and commit the smaller baseline. The
+diff is the progress report.
 
-- Vanilla HTML/CSS/JS — no build step
-- [LZ-string](https://github.com/pieroxy/lz-string) for compression (via CDN)
-- localStorage for local history
-- CSS Grid/Flexbox for responsive layout
+## Local development
 
-## Keyboard Shortcuts
+```bash
+npx serve .          # static only; the API needs `vercel dev`
+vercel dev           # full app, needs GITHUB_REPO and GITHUB_TOKEN
+```
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+S` | Save current note |
-| `Ctrl+Enter` | New note |
-| `Esc` | Blur editor |
+## Environment
+
+| Variable | Used by | Notes |
+|----------|---------|-------|
+| `GITHUB_REPO` | `api/notes.js` | `owner/repo` holding `data/notes.json` |
+| `GITHUB_TOKEN` | `api/notes.js` | Needs contents read+write on this repo only |
 
 ## License
 
