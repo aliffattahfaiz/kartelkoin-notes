@@ -1,50 +1,8 @@
 [
   {
-    "id": "cdn-no-sri",
-    "file": "index.html",
-    "message": "third-party asset without integrity: https://fonts.googleapis.com",
-    "detail": ""
-  },
-  {
     "id": "credential-content",
     "file": "data/notes.json",
     "message": "note mtbfudl9 contains a password value",
     "detail": "mtbfudl9"
-  },
-  {
-    "id": "missing-header",
-    "file": "vercel.json",
-    "message": "CSP header is not set",
-    "detail": ""
-  },
-  {
-    "id": "static-data",
-    "file": "data/notes.json",
-    "message": "1 file(s) under data/ are publicly served",
-    "detail": ""
-  },
-  {
-    "id": "toast-is-error",
-    "file": "app.js",
-    "message": "toast() delegates to showError()",
-    "detail": ""
-  },
-  {
-    "id": "unauth-write",
-    "file": "api/notes.js",
-    "message": "handler accepts POST/PATCH/DELETE with no auth check",
-    "detail": ""
-  },
-  {
-    "id": "wildcard-cors",
-    "file": "api/notes.js",
-    "message": "Access-Control-Allow-Origin is *",
-    "detail": ""
-  },
-  {
-    "id": "wildcard-cors",
-    "file": "vercel.json",
-    "message": "Access-Control-Allow-Origin is *",
-    "detail": ""
   }
 ]

@@ -1,169 +1,249 @@
-const GITHUB_REPO = process.env.GITHUB_REPO;
-const GH_API = `https://api.github.com/repos/${GITHUB_REPO}/contents/data/notes.json`;
+'use strict';
 
-function ghHeaders(extra = {}) {
-  return {
-    Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'kartelkoin-notes',
-    ...extra
-  };
-}
+const { readBoard, updateBoard } = require('../lib/store');
+const {
+  normalizeNoteInput,
+  newNoteId,
+  toPublicNote,
+  toTrashEntry,
+  purgeExpired,
+  LIMITS,
+} = require('../lib/notes');
+const {
+  configured,
+  isAuthenticated,
+  originAllowed,
+  rateLimit,
+  clientIp,
+  json,
+  methodNotAllowed,
+  readJson,
+} = require('../lib/session');
 
-function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Cache-Control', 'no-store');
-}
+const MAX_BODY_BYTES = 12 * 1024;
+const WRITE_LIMIT = 60;
+const WRITE_WINDOW_MS = 60 * 1000;
 
-function validateNote(title, content) {
-  if (!content || !content.trim()) {
-    return { valid: false, error: 'Content is required' };
+function boardResponse(res, board, { notModified = false } = {}) {
+  const etag = `"v${board.version}"`;
+  if (notModified) {
+    res.statusCode = 304;
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.end();
   }
-  if (title && title.length > 120) {
-    return { valid: false, error: 'Title must be 120 characters or less' };
-  }
-  if (content.length > 10000) {
-    return { valid: false, error: 'Content must be 10000 characters or less' };
-  }
-  return { valid: true };
-}
-
-async function fetchNotes() {
-  const response = await fetch(GH_API, { headers: ghHeaders() });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch notes: ${response.status}`);
-  }
-  const meta = await response.json();
-  return JSON.parse(Buffer.from(meta.content, 'base64').toString('utf8'));
-}
-
-// Reads current notes, lets mutator produce the new array, commits it.
-async function mutateNotes(mutator) {
-  const metaRes = await fetch(GH_API, { headers: ghHeaders() });
-  if (!metaRes.ok) throw new Error(`Failed to read file meta: ${metaRes.status}`);
-  const meta = await metaRes.json();
-  const notes = JSON.parse(Buffer.from(meta.content, 'base64').toString('utf8'));
-
-  const result = mutator(notes);
-
-  const putRes = await fetch(GH_API, {
-    method: 'PUT',
-    headers: ghHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      message: `KartelKoin: ${mutator.commitMessage}`,
-      content: Buffer.from(JSON.stringify(notes, null, 2)).toString('base64'),
-      sha: meta.sha
-    })
-  });
-  if (!putRes.ok) {
-    const t = await putRes.text();
-    throw new Error(`Failed to write notes: ${putRes.status} ${t}`);
-  }
-  return result;
+  return json(
+    res,
+    200,
+    {
+      version: board.version,
+      notes: board.notes
+        .filter((note) => !note.deletedAt)
+        .sort((a, b) => {
+          if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+          return String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt));
+        })
+        .map(toPublicNote),
+      trash: board.notes.filter((note) => note.deletedAt).map(toTrashEntry),
+      limits: LIMITS,
+    },
+    { ETag: etag }
+  );
 }
 
 module.exports = async (req, res) => {
-  cors(res);
+  if (!(await configured())) {
+    return json(res, 503, { error: 'This board is not configured.' });
+  }
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  // Every route here is private. There is no anonymous read path: the board
+  // holds whatever the owner typed, which in the old store included passwords.
+  if (!(await isAuthenticated(req))) {
+    return json(res, 401, { error: 'Sign in to read this board' });
   }
 
   if (req.method === 'GET') {
-    try {
-      const notes = await fetchNotes();
-      return res.status(200).json({ notes });
-    } catch (err) {
-      console.error('GET /api/notes error:', err);
-      return res.status(500).json({ error: 'Failed to load notes' });
+    const { board } = await readBoard();
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch && ifNoneMatch === `"v${board.version}"`) {
+      return boardResponse(res, board, { notModified: true });
     }
+    return boardResponse(res, board);
   }
 
-  if (req.method === 'POST') {
-    try {
-      if (JSON.stringify(req.body).length > 10240) {
-        return res.status(429).json({ error: 'Request too large' });
-      }
-
-      const { title, content } = req.body || {};
-      const validation = validateNote(title, content);
-      if (!validation.valid) {
-        return res.status(400).json({ error: validation.error });
-      }
-
-      const newNote = {
-        id: Date.now().toString(36),
-        title: title?.trim() || 'Untitled',
-        content: content.trim(),
-        createdAt: new Date().toISOString()
-      };
-
-      // Return the note itself so the client can render it immediately
-      // without waiting for GitHub to reflect the commit.
-      await mutateNotes((notes) => {
-        notes.unshift(newNote);
-        return { commitMessage: `Add note ${newNote.id}` };
-      });
-
-      return res.status(200).json({ ok: true, note: newNote });
-    } catch (err) {
-      console.error('POST /api/notes error:', err);
-      return res.status(500).json({ error: 'Failed to save note' });
-    }
+  if (req.method !== 'POST' && req.method !== 'PATCH' && req.method !== 'DELETE') {
+    return methodNotAllowed(res, ['GET', 'POST', 'PATCH', 'DELETE']);
   }
 
-  if (req.method === 'PATCH') {
-    try {
-      const { id, title, content } = req.body || {};
-      if (!id) return res.status(400).json({ error: 'Note id is required' });
-      const validation = validateNote(title, content);
-      if (!validation.valid) {
-        return res.status(400).json({ error: validation.error });
-      }
+  if (!originAllowed(req)) return json(res, 403, { error: 'Origin not allowed' });
 
-      let updated = null;
-      await mutateNotes((notes) => {
-        const idx = notes.findIndex(n => n.id === id);
-        if (idx === -1) throw Object.assign(new Error('Note not found'), { statusCode: 404 });
-        notes[idx] = { ...notes[idx], title: title?.trim() || 'Untitled', content: content.trim(), updatedAt: new Date().toISOString() };
-        updated = notes[idx];
-        return { commitMessage: `Edit note ${id}` };
-      });
-
-      return res.status(200).json({ ok: true, note: updated });
-    } catch (err) {
-      console.error('PATCH /api/notes error:', err);
-      if (err.statusCode === 404) return res.status(404).json({ error: 'Note not found' });
-      return res.status(500).json({ error: 'Failed to edit note' });
-    }
+  const limit = rateLimit(`write:${clientIp(req)}`, WRITE_LIMIT, WRITE_WINDOW_MS);
+  if (!limit.ok) {
+    res.setHeader('Retry-After', Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 1000)));
+    return json(res, 429, { error: 'Slow down a moment.' });
   }
 
-  if (req.method === 'DELETE') {
-    try {
-      const { id } = req.body || {};
-      if (!id) return res.status(400).json({ error: 'Note id is required' });
+  const parsed = await readJson(req, MAX_BODY_BYTES);
+  if (!parsed.ok) return json(res, parsed.status, { error: parsed.error });
+  const body = parsed.value;
 
-      let existed = false;
-      await mutateNotes((notes) => {
-        const idx = notes.findIndex(n => n.id === id);
-        if (idx !== -1) {
-          notes.splice(idx, 1);
-          existed = true;
-        }
-        return { commitMessage: `Delete note ${id}` };
-      });
-
-      if (!existed) return res.status(404).json({ error: 'Note not found' });
-      return res.status(200).json({ ok: true });
-    } catch (err) {
-      console.error('DELETE /api/notes error:', err);
-      if (err.statusCode === 404) return res.status(404).json({ error: 'Note not found' });
-      return res.status(500).json({ error: 'Failed to delete note' });
+  try {
+    if (req.method === 'POST') {
+      if (body.action === 'restore') return await restoreNote(res, body);
+      if (body.action === 'empty-trash') return await emptyTrash(res);
+      return await createNote(res, body);
     }
+    if (req.method === 'PATCH') return await updateNote(res, body);
+    return await deleteNote(res, body);
+  } catch (err) {
+    if (err.statusCode === 409) {
+      return json(res, 409, { error: 'Someone else changed the board. Reload and try again.' });
+    }
+    if (err.statusCode === 413) {
+      return json(res, 413, { error: err.message });
+    }
+    console.error(`${req.method} /api/notes failed:`, err);
+    return json(res, 500, { error: 'The board could not be saved' });
   }
-
-  res.setHeader('Allow', 'GET, POST, PATCH, DELETE, OPTIONS');
-  return res.status(405).json({ error: 'Method not allowed' });
 };
+
+async function createNote(res, body) {
+  const normalised = normalizeNoteInput(body);
+  if (!normalised.ok) return json(res, 400, { error: normalised.error });
+
+  const now = new Date().toISOString();
+  const note = {
+    id: newNoteId(),
+    ...normalised.value,
+    createdAt: now,
+    updatedAt: now,
+    author: String(body.author || '').trim().slice(0, 40),
+    version: 1,
+    deletedAt: null,
+  };
+
+  const { board } = await updateBoard((draft) => {
+    if (draft.notes.filter((n) => !n.deletedAt).length >= LIMITS.notes) {
+      const full = new Error('Board is full');
+      full.statusCode = 413;
+      throw full;
+    }
+    draft.notes.push(note);
+    return note;
+  });
+
+  return boardResponse(res, board);
+}
+
+async function updateNote(res, body) {
+  if (typeof body.id !== 'string' || !body.id) {
+    return json(res, 400, { error: 'Note id is required' });
+  }
+
+  let notFound = false;
+  let conflict = false;
+  let problem = null;
+
+  const { board } = await updateBoard((draft) => {
+    const index = draft.notes.findIndex((note) => note.id === body.id && !note.deletedAt);
+    if (index === -1) {
+      notFound = true;
+      return false;
+    }
+    const existing = draft.notes[index];
+    // Optimistic concurrency: if the caller edited a version that has since
+    // moved, refuse instead of overwriting a newer body.
+    if (body.version !== undefined && Number(body.version) !== Number(existing.version || 1)) {
+      conflict = true;
+      return false;
+    }
+
+    // A PATCH only needs the fields it changes. Merging first means a client
+    // that sends { id, content } keeps its title and tags instead of having
+    // them silently reset.
+    const normalised = normalizeNoteInput({
+      title: body.title === undefined ? existing.title : body.title,
+      content: body.content === undefined ? existing.content : body.content,
+      tags: body.tags === undefined ? existing.tags : body.tags,
+      pinned: body.pinned === undefined ? existing.pinned : body.pinned,
+      done: body.done === undefined ? existing.done : body.done,
+    });
+    if (!normalised.ok) {
+      problem = normalised.error;
+      return false;
+    }
+
+    draft.notes[index] = {
+      ...existing,
+      ...normalised.value,
+      version: Number(existing.version || 1) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    return draft.notes[index];
+  });
+
+  if (notFound) return json(res, 404, { error: 'Note not found' });
+  if (conflict) {
+    return json(res, 409, { error: 'This note changed while you were editing. Reload to see the latest.' });
+  }
+  if (problem) return json(res, 400, { error: problem });
+  return boardResponse(res, board);
+}
+
+async function deleteNote(res, body) {
+  if (typeof body.id !== 'string' || !body.id) {
+    return json(res, 400, { error: 'Note id is required' });
+  }
+
+  let notFound = false;
+  const { board } = await updateBoard((draft) => {
+    const index = draft.notes.findIndex((note) => note.id === body.id && !note.deletedAt);
+    if (index === -1) {
+      notFound = true;
+      return false;
+    }
+    // Soft delete: the note stays in the store for 30 days so the undo button
+    // in the UI is honest, and so a misclick is not a data loss event.
+    draft.notes[index] = {
+      ...draft.notes[index],
+      deletedAt: new Date().toISOString(),
+      version: Number(draft.notes[index].version || 1) + 1,
+    };
+    return true;
+  });
+
+  if (notFound) return json(res, 404, { error: 'Note not found' });
+  return boardResponse(res, board);
+}
+
+async function restoreNote(res, body) {
+  if (typeof body.id !== 'string' || !body.id) {
+    return json(res, 400, { error: 'Note id is required' });
+  }
+  let notFound = false;
+  const { board } = await updateBoard((draft) => {
+    const index = draft.notes.findIndex((note) => note.id === body.id && note.deletedAt);
+    if (index === -1) {
+      notFound = true;
+      return false;
+    }
+    draft.notes[index] = {
+      ...draft.notes[index],
+      deletedAt: null,
+      updatedAt: new Date().toISOString(),
+      version: Number(draft.notes[index].version || 1) + 1,
+    };
+    return true;
+  });
+  if (notFound) return json(res, 404, { error: 'Nothing to restore' });
+  return boardResponse(res, board);
+}
+
+async function emptyTrash(res) {
+  const { board } = await updateBoard((draft) => {
+    const before = draft.notes.length;
+    draft.notes = purgeExpired(draft.notes.filter((note) => !note.deletedAt));
+    return before !== draft.notes.length;
+  });
+  return boardResponse(res, board);
+}

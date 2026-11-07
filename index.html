@@ -1,97 +1,258 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KartelKoin Notes</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KartelKoin Notes</title>
+<meta name="description" content="A private, single-board notes ledger. PIN or passphrase, no tracking, no third parties.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#09090b">
+<meta name="robots" content="noindex, nofollow">
+<meta property="og:title" content="KartelKoin Notes">
+<meta property="og:description" content="A private, single-board notes ledger.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2309090b'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23e4a83f' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="app-container">
-    <header class="header">
-      <h1 class="logo">
-        <span class="logo-mark" aria-hidden="true">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="14" cy="14" r="13.5" stroke="url(#coinGradient)" stroke-width="2.5"/>
-            <text x="14" y="19" text-anchor="middle" font-family="Archivo Black, sans-serif" font-size="14" font-weight="800" fill="url(#coinGradient)">K</text>
-            <defs>
-              <linearGradient id="coinGradient" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#F5B800"/>
-                <stop offset="50%" stop-color="#FFD700"/>
-                <stop offset="100%" stop-color="#B8860B"/>
-              </linearGradient>
-            </defs>
-          </svg>
-        </span>
-        KartelKoin Notes
-      </h1>
+<a class="skip-link" href="#notes-grid">Skip to notes</a>
+
+<div class="shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <b>KartelKoin</b>
+      <span class="brand-sub">Notes</span>
+    </div>
+    <div class="topmeta">
+      <span id="status-line" class="status-line" role="status" aria-live="polite"></span>
+      <button type="button" id="lock-btn" class="ghost-btn" hidden>Lock</button>
+    </div>
+  </header>
+
+  <!-- Gate: nothing below this is rendered until the PIN or passphrase is
+       accepted. -->
+  <main id="gate" class="gate" hidden>
+    <div class="stage">
+      <form id="gate-form" class="card gate-card" autocomplete="off" novalidate>
+        <p class="eyebrow">Private board</p>
+        <h1 class="gate-title" id="gate-heading">Enter your PIN</h1>
+        <p class="gate-lede" id="gate-lede">
+          It is exchanged for a signed cookie, so it is not stored in this
+          browser after you sign in.
+        </p>
+
+        <div class="pin-label">
+          <span id="gate-label">PIN</span>
+          <em id="gate-progress" aria-live="off">0 of 4</em>
+        </div>
+
+        <!-- One real input stays under the cells: typing, paste, arrows and
+             backspace are the browser's own behaviour, and a screen reader
+             reads a password field rather than six decorative boxes. The cells
+             paint its value. -->
+        <div class="pin-wrap" id="pin-wrap">
+          <div class="pin-cells" id="pin-cells" aria-hidden="true"></div>
+          <input id="gate-passphrase" class="pin-input" type="password" name="passphrase"
+                 required autocomplete="current-password" spellcheck="false"
+                 autocapitalize="off" enterkeyhint="go" aria-describedby="gate-progress gate-error">
+        </div>
+
+        <p id="gate-error" class="gate-error" role="alert" hidden></p>
+        <button type="submit" id="gate-submit" class="btn btn-primary">Unlock board</button>
+
+        <div class="gate-alt">
+          <button type="button" id="gate-change-toggle" class="link-btn">Change the PIN or passphrase</button>
+        </div>
+
+        <div class="gate-fine">
+          <span>Sessions last 30 days<br>on this device.</span>
+          <span>Stored on Vercel Blob<br>No analytics, no scripts.</span>
+        </div>
+      </form>
+
+      <!-- The credential is set here, by whoever holds it, so no agent or admin
+           ever needs to see it. Requires the current one, and signs out every
+           other device. -->
+      <form id="change-form" class="card gate-card" autocomplete="off" novalidate hidden>
+        <p class="eyebrow">Credential</p>
+        <h2 class="gate-title gate-title-small">Change the PIN or passphrase</h2>
+        <p class="gate-lede">
+          Enter the current one, then choose what replaces it. Every other device
+          is signed out when it changes.
+        </p>
+        <fieldset class="kind-set">
+          <legend class="field-label">Use a</legend>
+          <div class="kind-switch">
+            <label class="kind-option">
+              <input type="radio" name="credential-kind" value="pin" id="kind-pin" checked>
+              <span>PIN</span>
+            </label>
+            <label class="kind-option">
+              <input type="radio" name="credential-kind" value="passphrase" id="kind-passphrase">
+              <span>Passphrase</span>
+            </label>
+          </div>
+        </fieldset>
+        <label class="field">
+          <span class="field-label">Current PIN or passphrase</span>
+          <input id="change-current" type="password" required autocomplete="current-password" spellcheck="false">
+        </label>
+        <label class="field">
+          <span class="field-label" id="change-next-label">New PIN</span>
+          <input id="change-next" type="password" required autocomplete="new-password" spellcheck="false"
+                 autocapitalize="off" inputmode="numeric" minlength="4" maxlength="12">
+        </label>
+        <label class="field">
+          <span class="field-label" id="change-confirm-label">Repeat the new PIN</span>
+          <input id="change-confirm" type="password" required autocomplete="new-password" spellcheck="false"
+                 autocapitalize="off" inputmode="numeric" maxlength="12">
+        </label>
+        <p class="gate-note" id="change-hint">4 to 12 digits. Five wrong attempts start a short lockout, so a four-digit PIN is no longer ten thousand free guesses.</p>
+        <p id="change-error" class="gate-error" role="alert" hidden></p>
+        <button type="submit" id="change-submit" class="btn btn-primary">Save new PIN</button>
+        <button type="button" id="change-cancel" class="btn btn-quiet">Cancel</button>
+      </form>
+    </div>
+  </main>
+
+  <main id="app" class="app" hidden>
+    <div class="wrap">
+      <section class="board" aria-labelledby="board-heading">
+        <div class="toolbar">
+          <div class="h2">
+            <h2 id="board-heading">Notes</h2>
+            <span id="notes-count" class="count">0</span>
+          </div>
+          <div class="tools">
+            <label class="search">
+              <span class="sr-only">Search notes</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="search-icon">
+                <circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line>
+              </svg>
+              <input id="search" type="search" placeholder="Search notes" autocomplete="off">
+              <kbd>/</kbd>
+            </label>
+
+            <label class="select">
+              <span class="sr-only">Sort notes</span>
+              <select id="sort">
+                <option value="updated">Recently edited</option>
+                <option value="created">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="title">Title A–Z</option>
+              </select>
+              <span class="chev" aria-hidden="true"></span>
+            </label>
+
+            <button type="button" id="new-note" class="newbtn"><span aria-hidden="true">+</span>New note</button>
+          </div>
+        </div>
+
+        <div id="tag-filter" class="chips" hidden></div>
+
+        <div id="loading" class="loading" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Loading board…</span>
+        </div>
+
+        <div id="empty" class="empty" hidden>
+          <p class="empty-title">Nothing here yet</p>
+          <p class="empty-body">The first note you save will appear on this shelf.</p>
+        </div>
+
+        <div id="no-results" class="empty" hidden>
+          <p class="empty-title">No matches</p>
+          <p class="empty-body">Try a different word, or clear the search.</p>
+        </div>
+
+        <ul id="notes-grid" class="ledger" aria-label="Saved notes"></ul>
+      </section>
+
+      <aside class="aside" aria-label="Board tools">
+        <h3>Tags</h3>
+        <div id="tag-aside" class="tagrows"></div>
+
+        <div class="aside-block">
+          <details id="trash" class="trash" hidden>
+            <summary>Recently deleted <span id="trash-count" class="count">0</span></summary>
+            <ul id="trash-list" class="trash-list"></ul>
+          </details>
+        </div>
+
+        <div class="aside-block">
+          <button type="button" id="export-btn" class="tagrow as-link">Export Markdown</button>
+        </div>
+
+        <div class="keys">
+          <div><span>N</span>New note</div>
+          <div><span>/</span>Search</div>
+          <div><span>⌘ ↵</span>Save</div>
+          <div><span>Esc</span>Close editor</div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <span>KartelKoin Notes</span>
+    <span>Stored on Vercel Blob, private. No analytics, no third-party scripts.</span>
+    <span>PIN entry pattern by <a href="https://rareui.com" rel="noopener">Rare UI</a></span>
+  </footer>
+</div>
+
+<button type="button" id="fab" class="fab" aria-label="New note" hidden>
+  <span aria-hidden="true">+</span>
+</button>
+
+<!-- The editor is a sheet, closed by default, so the first screen is notes
+     rather than an empty composer. Non-modal: the list stays usable. -->
+<dialog id="editor" class="sheet" aria-labelledby="composer-heading">
+  <form id="composer-form" class="sheet-form" autocomplete="off" novalidate>
+    <header class="sheet-head">
+      <div>
+        <p class="eyebrow" id="composer-kicker">New note</p>
+        <h2 id="composer-heading" class="sheet-title">New note</h2>
+      </div>
+      <button type="button" id="composer-close" class="icon-btn" aria-label="Close editor">×</button>
     </header>
 
-    <main class="main-content">
-      <section class="composer-section">
-        <form id="composer-form" class="composer-form" aria-label="Create new note">
-          <div class="composer-header">
-            <input type="text" id="note-title" class="note-title-input" placeholder="Title (optional, max 120 chars)" aria-label="Note title" maxlength="120">
-          </div>
-          <textarea
-            id="note-editor"
-            class="note-editor"
-            placeholder="Write a note... (max 10,000 characters)"
-            aria-label="Note content"
-            spellcheck="true"
-            maxlength="10000"
-          ></textarea>
-          <div class="composer-footer">
-            <span id="char-count" class="char-count">0 characters</span>
-            <div class="composer-buttons">
-              <button type="button" id="new-btn" class="btn btn-secondary btn-sm">New</button>
-              <button type="submit" id="post-btn" class="btn btn-primary">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-                Save
-              </button>
-            </div>
-          </div>
-        </form>
-        <div id="error-banner" class="error-banner hidden" role="alert"></div>
-      </section>
+    <div class="sheet-body">
+      <p id="editing-banner" class="editing-banner" hidden>
+        <span>Editing <strong id="editing-title"></strong></span>
+        <button type="button" id="delete-btn" class="link-btn link-danger">Move to trash</button>
+      </p>
 
-      <section class="notes-board-section">
-        <div class="notes-board-header">
-          <h2>All Notes</h2>
-          <div class="board-header-actions">
-            <span id="notes-count" class="notes-count">0 notes</span>
-            <button type="button" id="copy-all-btn" class="note-icon-btn copy-all-btn" aria-label="Copy all notes" title="Copy all notes">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </button>
-          </div>
-        </div>
-        <div id="notes-grid" class="notes-grid" role="list"></div>
-        <div id="loading-state" class="loading-state hidden" aria-live="polite">
-          <div class="spinner"></div>
-          <span>Loading notes...</span>
-        </div>
-        <div id="empty-state" class="empty-state hidden">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
-            <line x1="16" y1="13" x2="8" y2="13"></line>
-            <line x1="16" y1="17" x2="8" y2="17"></line>
-            <polyline points="10 9 9 9 8 9"></polyline>
-          </svg>
-          <p>No notes yet</p>
-          <span>Be the first to post!</span>
-        </div>
-      </section>
-    </main>
-  </div>
+      <label class="field">
+        <span class="field-label">Title <span class="optional">optional — taken from the first line if blank</span></span>
+        <input id="note-title" type="text" maxlength="120" placeholder="A short name for this note">
+      </label>
 
-  <script src="lz-string.min.js"></script>
-  <script src="app.js"></script>
+      <label class="field field-grow">
+        <span class="field-label">Note</span>
+        <textarea id="note-editor" rows="12" maxlength="10000" spellcheck="true"
+                  placeholder="Write it down. ⌘↵ saves."></textarea>
+      </label>
+
+      <label class="field">
+        <span class="field-label">Tags <span class="optional">comma separated</span></span>
+        <input id="note-tags" type="text" maxlength="120" placeholder="infra, keys, todo">
+      </label>
+    </div>
+
+    <footer class="sheet-actions">
+      <span id="char-count" class="counter" aria-live="off">0 / 10,000</span>
+      <button type="submit" id="save-btn" class="btn btn-primary">Save note</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- One notice region: a failure is red, a success is neutral, and only one is
+     shown at a time. -->
+<div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<script src="/toast-queue.js" defer></script>
+<script src="/app.js" defer></script>
 </body>
 </html>

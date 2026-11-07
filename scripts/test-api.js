@@ -1,0 +1,541 @@
+'use strict';
+
+// End-to-end checks against the real handlers, using a scratch blob path.
+// Run with: node scripts/test-api.js
+// Requires BLOB_READ_WRITE_TOKEN (pulled from the project) and network access.
+
+require('./test-env');
+
+const assert = require('node:assert/strict');
+const notesHandler = require('../api/notes');
+const sessionHandler = require('../api/session');
+const auth = require('../lib/auth');
+const { resetRateLimits } = require('../lib/session');
+const { del } = require('@vercel/blob');
+
+const BOARD_PATH = process.env.BOARD_BLOB_PATH;
+
+function makeReq({ method = 'GET', body, headers = {} } = {}) {
+  const payload = body === undefined ? '' : JSON.stringify(body);
+  const req = {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(payload ? { 'content-length': String(Buffer.byteLength(payload)) } : {}),
+      ...headers,
+    },
+    socket: { remoteAddress: '127.0.0.1' },
+  };
+  req[Symbol.asyncIterator] = async function* iterate() {
+    if (payload) yield Buffer.from(payload);
+  };
+  return req;
+}
+
+function makeRes() {
+  const res = {
+    statusCode: 200,
+    headers: {},
+    payload: undefined,
+    ended: false,
+    setHeader(key, value) {
+      this.headers[key.toLowerCase()] = value;
+    },
+    getHeader(key) {
+      return this.headers[key.toLowerCase()];
+    },
+    end(chunk) {
+      this.ended = true;
+      if (chunk !== undefined) {
+        try {
+          this.payload = JSON.parse(String(chunk));
+        } catch {
+          this.payload = String(chunk);
+        }
+      }
+      return this;
+    },
+    get json() {
+      return this.payload;
+    },
+  };
+  return res;
+}
+
+async function call(handler, options) {
+  const res = makeRes();
+  await handler(makeReq(options), res);
+  return res;
+}
+
+const results = [];
+function check(name, fn) {
+  results.push({ name, fn });
+}
+
+const cookie = () => ({ cookie: `kk_session=${token}` });
+let token = '';
+
+check('session status reports unauthenticated', async () => {
+  const res = await call(sessionHandler, { method: 'GET' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json.authenticated, false);
+});
+
+check('notes are not readable without a session', async () => {
+  const res = await call(notesHandler, { method: 'GET' });
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.json.notes, undefined);
+});
+
+check('writes are refused without a session', async () => {
+  for (const method of ['POST', 'PATCH', 'DELETE']) {
+    const res = await call(notesHandler, { method, body: { title: 'x', content: 'y', id: 'x' } });
+    assert.equal(res.statusCode, 401, `${method} must be 401`);
+  }
+});
+
+check('wrong passphrase is rejected', async () => {
+  const res = await call(sessionHandler, { method: 'POST', body: { passphrase: 'nope' } });
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.getHeader('set-cookie'), undefined);
+});
+
+check('correct passphrase issues an HttpOnly, Secure, SameSite cookie', async () => {
+  const res = await call(sessionHandler, {
+    method: 'POST',
+    body: { passphrase: process.env.BOARD_PASSPHRASE },
+  });
+  assert.equal(res.statusCode, 200);
+  const setCookie = res.getHeader('set-cookie');
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /Secure/);
+  assert.match(setCookie, /SameSite=Strict/);
+  assert.doesNotMatch(setCookie, /Domain=/);
+  token = /kk_session=([^;]+)/.exec(setCookie)[1];
+  assert.ok(token.length > 20);
+});
+
+check('a forged cookie is rejected', async () => {
+  const res = await call(notesHandler, {
+    method: 'GET',
+    headers: { cookie: 'kk_session=eyJzaWQiOiJ4IiwiZXhwIjo5OTk5OTk5OTk5fQ.deadbeef' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+check('an expired token is rejected', async () => {
+  const { issueToken, verifyToken } = require('../lib/session');
+  const real = Date.now;
+  const past = Math.floor(real() / 1000) - 60 * 60 * 24 * 400;
+  Date.now = () => past * 1000;
+  const oldToken = issueToken();
+  Date.now = real;
+  assert.equal(verifyToken(oldToken), false);
+});
+
+check('OPTIONS is not answered with a wildcard origin', async () => {
+  const res = await call(notesHandler, { method: 'OPTIONS' });
+  assert.notEqual(res.getHeader('access-control-allow-origin'), '*');
+  assert.equal(res.getHeader('access-control-allow-origin'), undefined);
+});
+
+check('a cross-origin write is refused', async () => {
+  const res = await call(notesHandler, {
+    method: 'POST',
+    body: { title: 'x', content: 'y' },
+    headers: { ...cookie(), origin: 'https://evil.example' },
+  });
+  assert.equal(res.statusCode, 403);
+});
+
+check('an oversized body is 413, not 429', async () => {
+  const res = await call(notesHandler, {
+    method: 'POST',
+    body: { content: 'a'.repeat(20000) },
+    headers: cookie(),
+  });
+  assert.equal(res.statusCode, 413);
+});
+
+check('a blank note is rejected', async () => {
+  const res = await call(notesHandler, {
+    method: 'POST',
+    body: { title: 'empty', content: '   ' },
+    headers: cookie(),
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+let createdId = '';
+
+check('a note can be created, with a derived title and uuid id', async () => {
+  const res = await call(notesHandler, {
+    method: 'POST',
+    body: { title: '', content: 'First line of the note\nsecond line', tags: ['Infra', 'keys', 'keys'] },
+    headers: cookie(),
+  });
+  assert.equal(res.statusCode, 200);
+  const note = res.json.notes.find((n) => n.content.startsWith('First line'));
+  assert.ok(note, 'the new note is in the returned board');
+  assert.equal(note.title, 'First line of the note');
+  assert.deepEqual(note.tags, ['infra', 'keys']);
+  assert.match(note.id, /^[0-9a-f-]{36}$/);
+  assert.equal(note.version, 1);
+  createdId = note.id;
+  assert.ok(res.getHeader('etag'));
+});
+
+check('the board is sorted and carries no internal fields', async () => {
+  const res = await call(notesHandler, { method: 'GET', headers: cookie() });
+  assert.equal(res.statusCode, 200);
+  const note = res.json.notes.find((n) => n.id === createdId);
+  assert.deepEqual(Object.keys(note).sort(), [
+    'author', 'content', 'createdAt', 'done', 'id', 'pinned', 'tags', 'title', 'updatedAt', 'version',
+  ]);
+  assert.equal(note.deletedAt, undefined);
+});
+
+check('a stale version is a 409, a matching one succeeds', async () => {
+  const stale = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: createdId, title: 'Changed', content: 'Changed body', version: 99 },
+    headers: cookie(),
+  });
+  assert.equal(stale.statusCode, 409);
+
+  const ok = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: createdId, title: 'Changed', content: 'Changed body', version: 1 },
+    headers: cookie(),
+  });
+  assert.equal(ok.statusCode, 200);
+  const note = ok.json.notes.find((n) => n.id === createdId);
+  assert.equal(note.title, 'Changed');
+  assert.equal(note.version, 2);
+});
+
+check('a partial PATCH keeps the fields it does not send', async () => {
+  const created = await call(notesHandler, {
+    method: 'POST',
+    body: { title: 'Partial', content: 'first body', tags: ['keep', 'these'] },
+    headers: cookie(),
+  });
+  assert.equal(created.statusCode, 200);
+  const note = created.json.notes.find((n) => n.title === 'Partial');
+
+  const patched = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: note.id, content: 'second body', version: note.version },
+    headers: cookie(),
+  });
+  assert.equal(patched.statusCode, 200);
+  const after = patched.json.notes.find((n) => n.id === note.id);
+  assert.equal(after.content, 'second body');
+  assert.equal(after.title, 'Partial', 'title survives a PATCH that omits it');
+  assert.deepEqual(after.tags, ['keep', 'these'], 'tags survive a PATCH that omits them');
+});
+
+check('done is stored, reversible, and does not disturb the body', async () => {
+  const created = await call(notesHandler, {
+    method: 'POST',
+    body: { title: 'Finished', content: 'body stays', tags: ['done-test'] },
+    headers: cookie(),
+  });
+  const note = created.json.notes.find((n) => n.title === 'Finished');
+
+  const done = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: note.id, version: note.version, done: true },
+    headers: cookie(),
+  });
+  assert.equal(done.statusCode, 200);
+  const after = done.json.notes.find((n) => n.id === note.id);
+  assert.equal(after.done, true);
+  assert.equal(after.content, 'body stays');
+  assert.deepEqual(after.tags, ['done-test']);
+
+  const open = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: note.id, version: after.version, done: false },
+    headers: cookie(),
+  });
+  assert.equal(open.json.notes.find((n) => n.id === note.id).done, false);
+});
+
+check('delete is a soft delete that can be undone', async () => {
+  const removed = await call(notesHandler, {
+    method: 'DELETE',
+    body: { id: createdId },
+    headers: cookie(),
+  });
+  assert.equal(removed.statusCode, 200);
+  assert.equal(removed.json.notes.some((n) => n.id === createdId), false);
+  assert.equal(removed.json.trash.some((n) => n.id === createdId), true);
+
+  const restored = await call(notesHandler, {
+    method: 'POST',
+    body: { action: 'restore', id: createdId },
+    headers: cookie(),
+  });
+  assert.equal(restored.statusCode, 200);
+  assert.equal(restored.json.notes.some((n) => n.id === createdId), true);
+});
+
+check('unknown ids are 404, unsupported methods are 405', async () => {
+  const missing = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: 'nope', title: 'x', content: 'y' },
+    headers: cookie(),
+  });
+  assert.equal(missing.statusCode, 404);
+
+  const method = await call(notesHandler, { method: 'PUT', headers: cookie() });
+  assert.equal(method.statusCode, 405);
+  assert.match(method.getHeader('allow'), /GET/);
+});
+
+check('control characters are stripped from stored text', async () => {
+  const res = await call(notesHandler, {
+    method: 'POST',
+    body: { title: 'bell\u0007', content: 'text\u0000with\u0007control' },
+    headers: cookie(),
+  });
+  const note = res.json.notes.find((n) => n.content.startsWith('text'));
+  assert.equal(note.content, 'textwithcontrol');
+});
+
+check('a passphrase change needs the current passphrase', async () => {
+  const res = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: 'not-the-passphrase', next: 'another-long-passphrase' },
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+check('a passphrase change refuses a short one, and writes nothing', async () => {
+  const before = await auth.readAuth({ fresh: true });
+
+  const res = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: process.env.BOARD_PASSPHRASE, next: 'short' },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.json.error, /12 characters/);
+
+  const after = await auth.readAuth({ fresh: true });
+  assert.equal(after && after.epoch, before && before.epoch, 'a rejected change must not bump the epoch');
+});
+
+check('changing the passphrase rotates the passphrase and the epoch', async () => {
+  const before = process.env.BOARD_PASSPHRASE;
+  const next = 'a-new-and-longer-passphrase-2026';
+  const oldCookie = token;
+
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: before, next },
+  });
+  assert.equal(changed.statusCode, 200);
+  const changedCookie = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+  assert.notEqual(changedCookie, oldCookie);
+
+  // Every cookie minted before the change is dead, even though its signature
+  // still checks out.
+  const withOld = await call(notesHandler, {
+    method: 'GET',
+    headers: { cookie: `kk_session=${oldCookie}` },
+  });
+  assert.equal(withOld.statusCode, 401, 'a pre-change cookie no longer reads the board');
+
+  const withNew = await call(notesHandler, {
+    method: 'GET',
+    headers: { cookie: `kk_session=${changedCookie}` },
+  });
+  assert.equal(withNew.statusCode, 200, 'the cookie from the change still works');
+
+  // The old passphrase stops working, the new one signs in.
+  assert.equal(
+    (await call(sessionHandler, { method: 'POST', body: { passphrase: before } })).statusCode,
+    401
+  );
+  const signIn = await call(sessionHandler, { method: 'POST', body: { passphrase: next } });
+  assert.equal(signIn.statusCode, 200);
+  assert.match(signIn.getHeader('set-cookie'), /HttpOnly/);
+
+  // Put the test passphrase back so anything after this still works.
+  const restored = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: next, next: before },
+  });
+  assert.equal(restored.statusCode, 200);
+  token = /kk_session=([^;]+)/.exec(restored.getHeader('set-cookie'))[1];
+});
+
+check('the session route reports the minimum length and the credential shape', async () => {
+  const res = await call(sessionHandler, { method: 'GET' });
+  assert.equal(res.statusCode, 200);
+  assert.ok(Number(res.json.minLength) >= 8);
+  assert.ok(Number(res.json.pinMinLength) >= 4);
+  assert.ok(Number(res.json.pinMaxLength) <= 12);
+  assert.equal(res.json.kind, 'passphrase');
+  assert.equal(res.json.pinLength, null, 'a passphrase has no digit count');
+});
+
+check('a PIN can replace the passphrase', async () => {
+  resetRateLimits();
+  await auth.clearAttempts();
+
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: process.env.BOARD_PASSPHRASE, next: '7072', kind: 'pin' },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.json.kind, 'pin');
+  assert.equal(changed.json.pinLength, 4, 'the change response carries the digit count');
+  token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+
+  const status = await call(sessionHandler, { method: 'GET' });
+  assert.equal(status.json.kind, 'pin', 'the gate now asks for a PIN');
+  assert.equal(status.json.pinLength, 4, 'the gate can draw one cell per digit');
+});
+
+check('the PIN signs in, and the old passphrase does not', async () => {
+  resetRateLimits();
+  const typed = await call(sessionHandler, { method: 'POST', body: { pin: '7072' } });
+  assert.equal(typed.statusCode, 200);
+  assert.match(typed.getHeader('set-cookie'), /HttpOnly/);
+  token = /kk_session=([^;]+)/.exec(typed.getHeader('set-cookie'))[1];
+
+  const old = await call(sessionHandler, {
+    method: 'POST',
+    body: { passphrase: process.env.BOARD_PASSPHRASE },
+  });
+  assert.equal(old.statusCode, 401);
+  assert.equal(old.json.error, 'Wrong PIN');
+});
+
+check('a PIN outside four to twelve digits is refused', async () => {
+  for (const next of ['123', '1234567890123', 'abcd']) {
+    resetRateLimits();
+    const res = await call(sessionHandler, {
+      method: 'POST',
+      body: { action: 'change', current: '7072', next, kind: 'pin' },
+    });
+    assert.equal(res.statusCode, 400, `${next} must be refused`);
+    assert.match(res.json.error, /PIN/);
+  }
+
+  const still = await call(sessionHandler, { method: 'POST', body: { pin: '7072' } });
+  assert.equal(still.statusCode, 200, 'a refused change leaves the PIN alone');
+});
+
+check('a twelve-digit PIN reports twelve, not the value', async () => {
+  resetRateLimits();
+  const long = '123456789012';
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: '7072', next: long, kind: 'pin' },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.json.pinLength, 12);
+  token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+
+  const status = await call(sessionHandler, { method: 'GET' });
+  assert.equal(status.json.pinLength, 12);
+  assert.equal(JSON.stringify(status.json).includes(long), false, 'the response carries no digits');
+});
+
+check('a PIN can go back to a passphrase', async () => {
+  resetRateLimits();
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: {
+      action: 'change',
+      current: '123456789012',
+      next: process.env.BOARD_PASSPHRASE,
+      kind: 'passphrase',
+    },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.json.kind, 'passphrase');
+  assert.equal(changed.json.pinLength, null);
+  token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+});
+
+check('five wrong attempts lock the gate, and the right one waits too', async () => {
+  resetRateLimits();
+  await auth.clearAttempts();
+
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    resetRateLimits();
+    const res = await call(sessionHandler, { method: 'POST', body: { passphrase: `guess-${attempt}` } });
+    assert.equal(res.statusCode, 401, `attempt ${attempt} is a plain rejection`);
+  }
+
+  resetRateLimits();
+  const locked = await call(sessionHandler, { method: 'POST', body: { passphrase: 'guess-5' } });
+  assert.equal(locked.statusCode, 429, 'the fifth failure starts the lock');
+  assert.ok(Number(locked.getHeader('retry-after')) >= 1);
+
+  resetRateLimits();
+  const correct = await call(sessionHandler, {
+    method: 'POST',
+    body: { passphrase: process.env.BOARD_PASSPHRASE },
+  });
+  assert.equal(correct.statusCode, 429, 'the lock applies before the credential is checked');
+
+  await auth.clearAttempts();
+  resetRateLimits();
+  const after = await call(sessionHandler, {
+    method: 'POST',
+    body: { passphrase: process.env.BOARD_PASSPHRASE },
+  });
+  assert.equal(after.statusCode, 200, 'a successful sign-in clears the counter');
+  token = /kk_session=([^;]+)/.exec(after.getHeader('set-cookie'))[1];
+});
+
+check('concurrent writes do not lose notes', async () => {
+  const before = (await call(notesHandler, { method: 'GET', headers: cookie() })).json.notes.length;
+  const writers = Array.from({ length: 6 }, (_, index) =>
+    call(notesHandler, {
+      method: 'POST',
+      body: { title: `race ${index}`, content: `race body ${index}` },
+      headers: cookie(),
+    })
+  );
+  const responses = await Promise.all(writers);
+  for (const res of responses) assert.equal(res.statusCode, 200);
+
+  const after = (await call(notesHandler, { method: 'GET', headers: cookie() })).json.notes;
+  assert.equal(after.length, before + 6, 'every concurrent note survived');
+});
+
+(async () => {
+  // Reset the scratch document *before* the run, not after it. A failed store
+  // write can still be retrying when the process tries to clean up, and the
+  // retry then recreates the document with every note the run added — which
+  // quietly poisons the next run instead of this one.
+  if (BOARD_PATH && BOARD_PATH.startsWith('test/')) {
+    await del(BOARD_PATH).catch(() => {});
+    // The passphrase hash lives beside the board; a stale one would make the
+    // bootstrap passphrase stop working and poison the next run.
+    await del('test/auth.json').catch(() => {});
+    await del(auth.ATTEMPTS_PATH).catch(() => {});
+  }
+
+  let failed = 0;
+  for (const { name, fn } of results) {
+    try {
+      await fn();
+      console.log(`ok   ${name}`);
+    } catch (err) {
+      failed += 1;
+      console.log(`FAIL ${name}`);
+      console.log(`     ${err.message}`);
+    }
+  }
+
+  console.log(`\n${results.length - failed}/${results.length} passed`);
+  process.exit(failed === 0 ? 0 : 1);
+})();
