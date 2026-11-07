@@ -18,6 +18,7 @@ const {
   credentialKind,
   setPassphrase,
   storedKind,
+  storedPinLength,
   epoch,
   lockedFor,
   noteFailure,
@@ -33,9 +34,10 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const CHANGE_LIMIT = 5;
 const CHANGE_WINDOW_MS = 15 * 60 * 1000;
 
-function policy(kind) {
+function policy(kind, pinLength = null) {
   return {
     kind,
+    pinLength: kind === 'pin' ? pinLength : null,
     minLength: minLength(),
     pinMinLength: PIN_MIN_LENGTH,
     pinMaxLength: PIN_MAX_LENGTH,
@@ -58,10 +60,11 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === 'GET') {
+    const kind = await storedKind();
     return json(res, 200, {
       authenticated: await isAuthenticated(req),
       configured: true,
-      ...policy(await storedKind()),
+      ...policy(kind, await storedPinLength()),
     });
   }
 
@@ -110,7 +113,7 @@ async function signIn(req, res, body) {
   return json(
     res,
     200,
-    { authenticated: true, ...policy(kind) },
+    { authenticated: true, ...policy(kind, await storedPinLength()) },
     { 'Set-Cookie': sessionCookie(issueToken(await epoch())) }
   );
 }
@@ -173,7 +176,7 @@ async function changeCredential(req, res, body) {
   return json(
     res,
     200,
-    { authenticated: true, changed: true, ...policy(record.kind) },
+    { authenticated: true, changed: true, ...policy(record.kind, record.pinLength) },
     { 'Set-Cookie': sessionCookie(issueToken(record.epoch)) }
   );
 }

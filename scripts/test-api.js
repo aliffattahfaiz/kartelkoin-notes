@@ -191,7 +191,7 @@ check('the board is sorted and carries no internal fields', async () => {
   assert.equal(res.statusCode, 200);
   const note = res.json.notes.find((n) => n.id === createdId);
   assert.deepEqual(Object.keys(note).sort(), [
-    'author', 'content', 'createdAt', 'id', 'pinned', 'tags', 'title', 'updatedAt', 'version',
+    'author', 'content', 'createdAt', 'done', 'id', 'pinned', 'tags', 'title', 'updatedAt', 'version',
   ]);
   assert.equal(note.deletedAt, undefined);
 });
@@ -234,6 +234,33 @@ check('a partial PATCH keeps the fields it does not send', async () => {
   assert.equal(after.content, 'second body');
   assert.equal(after.title, 'Partial', 'title survives a PATCH that omits it');
   assert.deepEqual(after.tags, ['keep', 'these'], 'tags survive a PATCH that omits them');
+});
+
+check('done is stored, reversible, and does not disturb the body', async () => {
+  const created = await call(notesHandler, {
+    method: 'POST',
+    body: { title: 'Finished', content: 'body stays', tags: ['done-test'] },
+    headers: cookie(),
+  });
+  const note = created.json.notes.find((n) => n.title === 'Finished');
+
+  const done = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: note.id, version: note.version, done: true },
+    headers: cookie(),
+  });
+  assert.equal(done.statusCode, 200);
+  const after = done.json.notes.find((n) => n.id === note.id);
+  assert.equal(after.done, true);
+  assert.equal(after.content, 'body stays');
+  assert.deepEqual(after.tags, ['done-test']);
+
+  const open = await call(notesHandler, {
+    method: 'PATCH',
+    body: { id: note.id, version: after.version, done: false },
+    headers: cookie(),
+  });
+  assert.equal(open.json.notes.find((n) => n.id === note.id).done, false);
 });
 
 check('delete is a soft delete that can be undone', async () => {
@@ -352,6 +379,7 @@ check('the session route reports the minimum length and the credential shape', a
   assert.ok(Number(res.json.pinMinLength) >= 4);
   assert.ok(Number(res.json.pinMaxLength) <= 12);
   assert.equal(res.json.kind, 'passphrase');
+  assert.equal(res.json.pinLength, null, 'a passphrase has no digit count');
 });
 
 check('a PIN can replace the passphrase', async () => {
@@ -364,10 +392,12 @@ check('a PIN can replace the passphrase', async () => {
   });
   assert.equal(changed.statusCode, 200);
   assert.equal(changed.json.kind, 'pin');
+  assert.equal(changed.json.pinLength, 4, 'the change response carries the digit count');
   token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
 
   const status = await call(sessionHandler, { method: 'GET' });
   assert.equal(status.json.kind, 'pin', 'the gate now asks for a PIN');
+  assert.equal(status.json.pinLength, 4, 'the gate can draw one cell per digit');
 });
 
 check('the PIN signs in, and the old passphrase does not', async () => {
@@ -400,19 +430,36 @@ check('a PIN outside four to twelve digits is refused', async () => {
   assert.equal(still.statusCode, 200, 'a refused change leaves the PIN alone');
 });
 
+check('a twelve-digit PIN reports twelve, not the value', async () => {
+  resetRateLimits();
+  const long = '123456789012';
+  const changed = await call(sessionHandler, {
+    method: 'POST',
+    body: { action: 'change', current: '7072', next: long, kind: 'pin' },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.json.pinLength, 12);
+  token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
+
+  const status = await call(sessionHandler, { method: 'GET' });
+  assert.equal(status.json.pinLength, 12);
+  assert.equal(JSON.stringify(status.json).includes(long), false, 'the response carries no digits');
+});
+
 check('a PIN can go back to a passphrase', async () => {
   resetRateLimits();
   const changed = await call(sessionHandler, {
     method: 'POST',
     body: {
       action: 'change',
-      current: '7072',
+      current: '123456789012',
       next: process.env.BOARD_PASSPHRASE,
       kind: 'passphrase',
     },
   });
   assert.equal(changed.statusCode, 200);
   assert.equal(changed.json.kind, 'passphrase');
+  assert.equal(changed.json.pinLength, null);
   token = /kk_session=([^;]+)/.exec(changed.getHeader('set-cookie'))[1];
 });
 

@@ -2,9 +2,9 @@
    One file, no dependencies, no build step, no third-party requests.
 
    Shape of the app:
-     - a gate, because the board is private;
+     - a gate, because the board is private, with one cell per stored digit;
      - one list of notes fetched as a single document;
-     - an editor that knows whether it is dirty;
+     - an editor sheet that knows whether it is dirty;
      - a search / sort / tag layer that never mutates the store.
    There is no polling. The board is refreshed on focus and after every write,
    which is the only time it can have changed by someone else. */
@@ -18,6 +18,7 @@ const API = {
 
 const MAX_CONTENT = 10000;
 const MAX_TITLE = 120;
+const TOAST_MS = 4000;
 
 const state = {
   notes: [],
@@ -30,16 +31,21 @@ const state = {
   editingId: null,
   dirty: false,
   busy: false,
-  composerOpen: true,
   lastSyncedAt: null,
   minLength: 12,
   pinMin: 4,
   pinMax: 12,
+  pinLength: null,
   credentialKind: 'passphrase',
+  returnFocus: null,
+  deleteTimer: null,
+  deleteArmed: false,
 };
 
 const el = {};
 let dirtySnapshot = '';
+let toastQueue = null;
+let pinnedHeight = false;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -68,8 +74,17 @@ function formatAbsolute(iso) {
   return new Date(then).toLocaleString();
 }
 
-/** First meaningful line, used for the card body when the note has no title. */
-function preview(content, limit = 220) {
+/** The mono date gutter: "NOV 06". */
+function formatDay(iso) {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return '';
+  return new Date(then)
+    .toLocaleDateString('en-US', { month: 'short', day: '2-digit' })
+    .toUpperCase();
+}
+
+/** First meaningful line, used for the row body when the note has no title. */
+function preview(content, limit = 240) {
   const text = String(content || '').replace(/\s+/g, ' ').trim();
   return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
 }
@@ -84,58 +99,87 @@ function parseTags(raw) {
   )];
 }
 
-/* -------------------------------------------------------------------- toast */
-
-function dismissToast(node) {
-  if (!node || !node.isConnected) return;
-  node.remove();
+function prefersReducedMotion() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/* -------------------------------------------------------------------- toast */
+
 /**
- * A success message is a neutral notice that leaves by itself. Failures are a
- * separate element, are red, and stay until dismissed — the old build sent
- * both through one error banner, so "Saved" looked like a crash.
+ * One notice at a time, in one live region. The queue decides what is visible;
+ * this file only paints it. A burst of saves bumps a "+N" counter instead of
+ * stacking cards over the editor.
  */
 function notify(message, options = {}) {
+  if (!toastQueue) return;
+  toastQueue.push({
+    message,
+    detail: options.detail || '',
+    tone: options.tone === 'error' ? 'error' : 'ok',
+    action: options.action || null,
+    sticky: options.sticky === true,
+    buttons: options.actions || [],
+  });
+}
+
+function renderToast(toast) {
   const region = el.toastRegion;
   if (!region) return;
+  region.replaceChildren();
+  if (!toast) return;
 
   const node = document.createElement('div');
-  node.className = options.tone === 'error' ? 'toast toast-error' : 'toast';
-  node.setAttribute('role', options.tone === 'error' ? 'alert' : 'status');
+  node.className = toast.tone === 'error' ? 'toast toast-error' : 'toast';
 
-  const text = document.createElement('span');
-  text.className = 'toast-text';
-  text.textContent = message;
-  node.appendChild(text);
+  const icon = document.createElement('span');
+  icon.className = 'toast-ico';
+  icon.setAttribute('aria-hidden', 'true');
+  node.appendChild(icon);
 
-  if (options.action) {
+  const body = document.createElement('div');
+  body.className = 'toast-body';
+
+  const title = document.createElement('b');
+  title.textContent = toast.message;
+  body.appendChild(title);
+
+  if (toast.detail) {
+    const detail = document.createElement('p');
+    detail.textContent = toast.detail;
+    body.appendChild(detail);
+  }
+
+  if (toast.action) {
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'toast-action';
-    action.textContent = options.action.label;
+    action.textContent = toast.action.label;
     action.addEventListener('click', () => {
-      dismissToast(node);
-      if (typeof options.action.run === 'function') options.action.run();
+      toastQueue.dismiss();
+      if (typeof toast.action.run === 'function') toast.action.run();
     });
-    node.appendChild(action);
+    body.appendChild(action);
   }
 
-  // A destructive step is confirmed inside the page, not by window.confirm: the
-  // browser dialog puts focus on its OK button, so a stray Enter deletes a note
-  // the user only meant to open.
-  for (const action of options.actions || []) {
+  for (const extra of toast.buttons || []) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = action.tone === 'danger' ? 'toast-action toast-action-danger' : 'toast-action';
-    button.textContent = action.label;
+    button.className = extrasTone(extra) ? 'toast-action toast-action-danger' : 'toast-action';
+    button.textContent = extra.label;
     button.addEventListener('click', () => {
-      dismissToast(node);
-      // "Keep writing" / "Keep" carry no run() — they mean "do nothing", and
-      // calling the missing function threw inside the click handler.
-      if (typeof action.run === 'function') action.run();
+      toastQueue.dismiss();
+      if (typeof extra.run === 'function') extra.run();
     });
-    node.appendChild(button);
+    body.appendChild(button);
+  }
+
+  node.appendChild(body);
+
+  if (toastQueue.extra > 0) {
+    const pill = document.createElement('span');
+    pill.className = 'toast-extra';
+    pill.textContent = `+${toastQueue.extra}`;
+    node.appendChild(pill);
   }
 
   const close = document.createElement('button');
@@ -143,19 +187,14 @@ function notify(message, options = {}) {
   close.className = 'toast-dismiss';
   close.setAttribute('aria-label', 'Dismiss message');
   close.textContent = '×';
-  close.addEventListener('click', () => dismissToast(node));
+  close.addEventListener('click', () => toastQueue.dismiss());
   node.appendChild(close);
 
-  // Two saves in a row used to stack identical notices; one is enough.
-  for (const existing of [...region.children]) {
-    if (existing.querySelector('.toast-text')?.textContent === message) existing.remove();
-  }
   region.appendChild(node);
+}
 
-  if (options.tone !== 'error' && !options.sticky) {
-    setTimeout(() => dismissToast(node), options.duration || 4000);
-  }
-  return node;
+function extrasTone(action) {
+  return action.tone === 'danger';
 }
 
 /* --------------------------------------------------------------------- gate */
@@ -165,9 +204,21 @@ function showGate() {
   el.app.hidden = true;
   el.lockBtn.hidden = true;
   el.statusLine.textContent = '';
+  el.fab.hidden = true;
   el.changeForm.hidden = true;
   el.gateForm.hidden = false;
-  requestAnimationFrame(() => el.gatePassphrase.focus());
+  closeEditor({ force: true, restoreFocus: false });
+  requestAnimationFrame(() => focusGateInput());
+}
+
+function focusGateInput() {
+  el.gatePassphrase.focus();
+  const end = el.gatePassphrase.value.length;
+  try {
+    el.gatePassphrase.setSelectionRange(end, end);
+  } catch {
+    /* A password field can refuse; focus is the part that matters. */
+  }
 }
 
 function setMinLength(value) {
@@ -178,25 +229,104 @@ function setMinLength(value) {
 /** Adopts the policy the server reports, so the gate asks for the right thing. */
 function applyPolicy(data) {
   if (!data || typeof data !== 'object') return;
+
   setMinLength(data.minLength);
   const pinMin = Number(data.pinMinLength);
   const pinMax = Number(data.pinMaxLength);
   if (Number.isFinite(pinMin) && pinMin >= 4) state.pinMin = Math.floor(pinMin);
   if (Number.isFinite(pinMax) && pinMax >= state.pinMin) state.pinMax = Math.floor(pinMax);
   if (data.kind === 'pin' || data.kind === 'passphrase') state.credentialKind = data.kind;
+
+  const length = Number(data.pinLength);
+  state.pinLength = state.credentialKind === 'pin' && Number.isInteger(length) && length >= 4 && length <= state.pinMax
+    ? length
+    : null;
+
   describeGate();
 }
 
-/** The gate input follows the stored credential: numeric keypad for a PIN. */
+/** One cell per stored digit, but only when six fit. Longer PINs use one field. */
+function usesCells() {
+  return state.credentialKind === 'pin' && state.pinLength !== null && state.pinLength <= 6;
+}
+
 function describeGate() {
   const pin = state.credentialKind === 'pin';
   el.gateLabel.textContent = pin ? 'PIN' : 'Passphrase';
-  el.gatePassphrase.setAttribute('inputmode', pin ? 'numeric' : 'text');
-  if (pin) el.gatePassphrase.setAttribute('maxlength', String(state.pinMax));
-  else el.gatePassphrase.removeAttribute('maxlength');
+  el.gateHeading.textContent = pin ? 'Enter your PIN' : 'Enter your passphrase';
   el.gateLede.textContent = pin
-    ? 'Enter your PIN. It is exchanged for a signed cookie, so it is not stored in this browser after you sign in.'
-    : 'Enter your passphrase. It is exchanged for a signed cookie, so it is not stored in this browser after you sign in.';
+    ? 'It is exchanged for a signed cookie, so the digits are not stored in this browser after you sign in.'
+    : 'It is exchanged for a signed cookie, so it is not stored in this browser after you sign in.';
+
+  if (pin) {
+    el.gatePassphrase.setAttribute('inputmode', 'numeric');
+    el.gatePassphrase.setAttribute('maxlength', String(state.pinLength || state.pinMax));
+    el.gatePassphrase.setAttribute('aria-label', state.pinLength ? `${state.pinLength}-digit PIN` : 'PIN');
+  } else {
+    el.gatePassphrase.setAttribute('inputmode', 'text');
+    el.gatePassphrase.removeAttribute('maxlength');
+    el.gatePassphrase.setAttribute('aria-label', 'Passphrase');
+  }
+
+  const cells = usesCells();
+  el.pinWrap.classList.toggle('cells', cells);
+  el.pinCells.hidden = !cells;
+
+  if (cells) buildPinCells();
+  updatePinProgress();
+  clearGateError();
+}
+
+function buildPinCells() {
+  const count = state.pinLength || 0;
+  const value = el.gatePassphrase.value.slice(0, count);
+  const cells = el.pinCells;
+  cells.replaceChildren();
+
+  for (let index = 0; index < count; index += 1) {
+    const cell = document.createElement('div');
+    cell.className = 'pin-cell';
+    if (index < value.length) {
+      cell.classList.add('filled');
+      cell.appendChild(document.createElement('i'));
+    } else if (index === value.length) {
+      cell.classList.add('active');
+    }
+    cells.appendChild(cell);
+  }
+}
+
+function updatePinProgress() {
+  if (state.credentialKind !== 'pin') {
+    el.gateProgress.hidden = true;
+    el.gateProgress.textContent = '';
+    return;
+  }
+  el.gateProgress.hidden = false;
+  const length = el.gatePassphrase.value.length;
+  el.gateProgress.textContent = state.pinLength
+    ? `${Math.min(length, state.pinLength)} of ${state.pinLength}`
+    : `${length} digit${length === 1 ? '' : 's'}`;
+}
+
+function clearGateError() {
+  el.gateError.hidden = true;
+  el.gateError.textContent = '';
+  el.pinWrap.classList.remove('is-error');
+}
+
+function showGateError(message, { shake = false } = {}) {
+  el.gateError.textContent = message;
+  el.gateError.hidden = false;
+  el.pinWrap.classList.add('is-error');
+
+  if (shake && !prefersReducedMotion()) {
+    const target = usesCells() ? el.pinCells : el.pinWrap;
+    target.animate(
+      [{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(-2px)' }, { transform: 'translateX(0)' }],
+      { duration: 340, easing: 'ease-in-out' }
+    );
+  }
 }
 
 /** Switches the change form between the two credential shapes. */
@@ -226,7 +356,7 @@ function showChangeForm(show) {
     requestAnimationFrame(() => el.changeCurrent.focus());
   } else {
     describeGate();
-    requestAnimationFrame(() => el.gatePassphrase.focus());
+    requestAnimationFrame(() => focusGateInput());
   }
 }
 
@@ -270,7 +400,9 @@ async function submitCredentialChange() {
     showChangeForm(false);
     showBoard();
     await loadBoard();
-    notify(kind === 'pin' ? 'PIN saved. Other devices are signed out.' : 'Passphrase saved. Other devices are signed out.');
+    notify(kind === 'pin' ? 'PIN saved' : 'Passphrase saved', {
+      detail: 'Other devices are signed out.',
+    });
   } catch (err) {
     fail(err.message || 'The change could not be saved');
   } finally {
@@ -283,19 +415,21 @@ function showBoard() {
   el.gate.hidden = true;
   el.app.hidden = false;
   el.lockBtn.hidden = false;
-  el.gateError.hidden = true;
+  el.fab.hidden = false;
+  clearGateError();
 }
 
-async function unlock(passphrase) {
+async function unlock(credential) {
   const response = await fetch(API.session, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ passphrase }),
+    body: JSON.stringify({ passphrase: credential }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.error || 'Could not unlock the board');
     error.status = response.status;
+    error.retryAfter = Number(data.retryAfter) || 0;
     throw error;
   }
   applyPolicy(data);
@@ -315,7 +449,7 @@ async function lock() {
   resetEditor();
   el.notesGrid.replaceChildren();
   showGate();
-  notify('Locked. The board is hidden on this device.');
+  notify('Locked', { detail: 'The board is hidden on this device.' });
 }
 
 /* -------------------------------------------------------------------- store */
@@ -355,7 +489,7 @@ async function loadBoard({ quiet = false } = {}) {
     showBoard();
     updateStatus();
   } catch (err) {
-    notify(err.message || 'The board could not be loaded', { tone: 'error' });
+    notify('The board could not be loaded', { tone: 'error', detail: err.message || '' });
   } finally {
     setLoading(false);
   }
@@ -400,6 +534,7 @@ function visibleNotes() {
 
   list = list.slice().sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if (a.done !== b.done) return a.done ? 1 : -1;
     switch (state.sort) {
       case 'created':
         return Date.parse(b.createdAt) - Date.parse(a.createdAt);
@@ -417,7 +552,7 @@ function visibleNotes() {
 
 // A blank title is normal — the author typed straight into the body. Show the
 // first meaningful line instead, and keep "Untitled note" for a note that is
-// genuinely empty. Matches deriveTitle() in lib/notes.js so the card, the
+// genuinely empty. Matches deriveTitle() in lib/notes.js so the row, the
 // editor heading, the trash list and the export all agree.
 function displayTitle(note) {
   if (note && note.title) return note.title;
@@ -429,82 +564,225 @@ function displayTitle(note) {
   return firstLine.length > 60 ? `${firstLine.slice(0, 60).trimEnd()}…` : firstLine;
 }
 
-function buildCard(note) {
+function buildRow(note) {
   const item = document.createElement('li');
-  item.className = 'note-card';
+  item.className = 'row';
   item.dataset.id = note.id;
-  if (note.id === state.editingId) item.classList.add('is-open');
+  item.classList.toggle('done', note.done === true);
+  if (note.id === state.editingId) item.classList.add('sel');
+  if (note.id === state.editingId) item.setAttribute('aria-current', 'true');
 
-  const head = document.createElement('div');
-  head.className = 'note-card-head';
+  const date = document.createElement('div');
+  date.className = 'row-date';
+  date.textContent = formatDay(note.updatedAt || note.createdAt);
+  date.title = `Updated ${formatAbsolute(note.updatedAt || note.createdAt)}`;
+  item.appendChild(date);
 
-  const title = document.createElement('h3');
-  title.className = 'note-card-title';
-  title.textContent = displayTitle(note);
-  head.appendChild(title);
+  const main = document.createElement('div');
+  main.className = 'row-main';
 
-  if (note.pinned) {
-    const pin = document.createElement('span');
-    pin.className = 'pin-flag';
-    pin.textContent = 'Pinned';
-    head.appendChild(pin);
-  }
+  const titleLine = document.createElement('div');
+  titleLine.className = 'row-title';
 
-  item.appendChild(head);
+  const check = document.createElement('button');
+  check.type = 'button';
+  check.className = 'check';
+  check.setAttribute('role', 'checkbox');
+  check.setAttribute('aria-checked', String(note.done === true));
+  check.setAttribute('aria-label', `Mark “${displayTitle(note)}” as ${note.done ? 'open' : 'done'}`);
+  check.addEventListener('click', (event) => {
+    event.stopPropagation();
+    toggleDone(note.id);
+  });
+  titleLine.appendChild(check);
+
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'row-title-btn';
+  const label = document.createElement('span');
+  label.className = 'row-title-text';
+  label.textContent = displayTitle(note);
+  open.appendChild(label);
+  open.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openNote(note.id, open);
+  });
+  titleLine.appendChild(open);
+
+  main.appendChild(titleLine);
 
   const body = document.createElement('p');
-  body.className = 'note-card-body';
-  body.textContent = preview(note.content);
-  item.appendChild(body);
+  body.className = 'excerpt';
+  // A legacy note may have no stored title; the heading already shows its first
+  // line, so do not print that line twice.
+  body.textContent = preview(note.title ? note.content : String(note.content || '').split('\n').slice(1).join('\n'));
+  main.appendChild(body);
 
   if (Array.isArray(note.tags) && note.tags.length) {
     const tags = document.createElement('ul');
-    tags.className = 'note-tags';
+    tags.className = 'row-tags';
     for (const tag of note.tags) {
       const li = document.createElement('li');
-      li.className = 'note-tag';
+      li.className = 'tag';
       li.textContent = tag;
       tags.appendChild(li);
     }
-    item.appendChild(tags);
+    main.appendChild(tags);
   }
 
-  const foot = document.createElement('div');
-  foot.className = 'note-card-foot';
+  item.appendChild(main);
 
-  const time = document.createElement('time');
-  time.className = 'note-card-time';
-  time.dateTime = note.updatedAt || note.createdAt;
-  time.title = formatAbsolute(note.updatedAt || note.createdAt);
-  time.textContent = formatRelative(note.updatedAt || note.createdAt);
-  foot.appendChild(time);
+  const end = document.createElement('div');
+  end.className = 'row-end';
 
-  // A real button: focusable, Enter/Space activate it, the focus ring is the
-  // browser's. The whole card is still clickable as a convenience, but the
-  // keyboard path never depends on that.
-  const open = document.createElement('button');
-  open.type = 'button';
-  open.className = 'note-card-open';
-  open.textContent = note.id === state.editingId ? 'Editing' : 'Open';
-  open.addEventListener('click', (event) => {
-    event.stopPropagation();
-    openNote(note.id);
+  const status = document.createElement('div');
+  status.className = 'row-status';
+  if (note.id === state.editingId) status.textContent = 'Editing';
+  else if (note.done) status.textContent = 'Done';
+  else if (note.pinned) status.textContent = 'Pinned';
+  else status.textContent = 'Open';
+  end.appendChild(status);
+
+  // Two actions, one click away, without opening the note. Copy stays
+  // reversible and silent in the board; delete is a soft delete that offers
+  // Undo, so neither can lose work.
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
+
+  const copy = iconButton({
+    label: `Copy “${displayTitle(note)}”`,
+    hint: 'Copy',
+    icon: 'copy',
+    onClick: () => copyNote(note),
   });
-  foot.appendChild(open);
+  actions.appendChild(copy);
 
-  item.appendChild(foot);
+  const remove = iconButton({
+    label: `Move “${displayTitle(note)}” to trash`,
+    hint: 'Move to trash',
+    icon: 'trash',
+    onClick: (button) => armRowDelete(note, button),
+  });
+  remove.classList.add('danger');
+  actions.appendChild(remove);
+
+  end.appendChild(actions);
+  item.appendChild(end);
 
   item.addEventListener('click', (event) => {
     if (event.target.closest('button')) return;
-    openNote(note.id);
+    openNote(note.id, item);
   });
 
   return item;
 }
 
+const ICONS = {
+  copy: 'M8 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Zm0 0V6a2 2 0 0 1 2-2h8',
+  trash: 'M4 7h16M9 7V5h6v2m-8 0 1 13h8l1-13M10 11v6M14 11v6',
+  check: 'M5 12l5 5 9-11',
+};
+
+function iconButton({ label, hint, icon, onClick }) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'row-action';
+  button.setAttribute('aria-label', label);
+  button.title = hint;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', ICONS[icon]);
+  svg.appendChild(path);
+  button.appendChild(svg);
+
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onClick(button);
+  });
+
+  return button;
+}
+
+/** Title and body, or just the body when the title was derived from it. */
+function noteText(note) {
+  const body = String(note.content || '');
+  if (!note.title) return body.trim();
+  return `${note.title}\n\n${body.trim()}`.trim();
+}
+
+async function copyNote(note) {
+  const text = noteText(note);
+  if (!text) {
+    notify('This note is empty, so there is nothing to copy.', { tone: 'error' });
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Older browsers and non-secure contexts have no clipboard API.
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.top = '-1000px';
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand('copy');
+    area.remove();
+    if (!copied) {
+      notify('The note could not be copied', {
+        tone: 'error',
+        detail: 'Your browser blocked clipboard access.',
+      });
+      return;
+    }
+  }
+
+  notify('Copied to clipboard', { detail: displayTitle(note) });
+}
+
+/**
+ * Row delete confirms in place: the icon becomes a check for four seconds, then
+ * reverts. Escape or a second click elsewhere is not needed — letting it time
+ * out is the safe default.
+ */
+function armRowDelete(note, button) {
+  if (button.dataset.armed === 'true') {
+    clearTimeout(Number(button.dataset.timer) || 0);
+    delete button.dataset.armed;
+    button.classList.remove('armed');
+    button.title = 'Move to trash';
+    button.setAttribute('aria-label', `Move “${displayTitle(note)}” to trash`);
+    button.querySelector('path').setAttribute('d', ICONS.trash);
+    deleteNote(note.id);
+    return;
+  }
+
+  button.dataset.armed = 'true';
+  button.classList.add('armed');
+  button.title = 'Confirm delete';
+  button.setAttribute('aria-label', `Confirm deleting “${displayTitle(note)}”`);
+  button.querySelector('path').setAttribute('d', ICONS.check);
+
+  const timer = setTimeout(() => {
+    if (!button.isConnected) return;
+    delete button.dataset.armed;
+    button.classList.remove('armed');
+    button.title = 'Move to trash';
+    button.setAttribute('aria-label', `Move “${displayTitle(note)}” to trash`);
+    button.querySelector('path').setAttribute('d', ICONS.trash);
+  }, 4000);
+  button.dataset.timer = String(timer);
+}
+
 function render() {
   const list = visibleNotes();
   const total = state.notes.length;
+  const doneCount = state.notes.filter((note) => note.done === true).length;
 
   el.notesCount.textContent = String(total);
 
@@ -523,44 +801,94 @@ function render() {
     el.empty.hidden = true;
     el.noResults.hidden = true;
     el.loading.hidden = true;
+
     const fragment = document.createDocumentFragment();
-    for (const note of list) fragment.appendChild(buildCard(note));
+    let dividerAdded = false;
+    for (const note of list) {
+      if (note.done && !dividerAdded) {
+        dividerAdded = true;
+        fragment.appendChild(buildDoneDivider(doneCount));
+      }
+      fragment.appendChild(buildRow(note));
+    }
     grid.appendChild(fragment);
   }
 
-  renderTagFilter();
+  renderTags();
   renderTrash();
   updateStatus();
   syncEditorChrome();
 }
 
-function renderTagFilter() {
+function buildDoneDivider(count) {
+  const item = document.createElement('li');
+  item.className = 'ledger-divider';
+  item.textContent = `Done ${count}`;
+  return item;
+}
+
+/** One set of counts drives both the chip row and the aside list. */
+function renderTags() {
   const counts = new Map();
   for (const note of state.notes) {
     for (const tag of note.tags || []) counts.set(tag, (counts.get(tag) || 0) + 1);
   }
+  const tags = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
-  const container = el.tagFilter;
-  container.replaceChildren();
+  const chips = el.tagFilter;
+  const aside = el.tagAside;
+  chips.replaceChildren();
+  aside.replaceChildren();
 
-  if (counts.size === 0) {
-    container.hidden = true;
-    return;
-  }
-  container.hidden = false;
+  chips.hidden = tags.length === 0;
+  if (tags.length === 0) return;
 
-  for (const [tag, count] of [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'chip';
+  all.classList.toggle('on', state.activeTags.size === 0);
+  all.setAttribute('aria-pressed', String(state.activeTags.size === 0));
+  all.textContent = 'All ';
+  const allCount = document.createElement('b');
+  allCount.textContent = String(state.notes.length);
+  all.appendChild(allCount);
+  all.addEventListener('click', () => {
+    state.activeTags.clear();
+    render();
+  });
+  chips.appendChild(all);
+
+  for (const [tag, count] of tags) {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'tag-chip';
-    chip.textContent = `${tag} ${count}`;
+    chip.className = 'chip';
+    chip.classList.toggle('on', state.activeTags.has(tag));
     chip.setAttribute('aria-pressed', String(state.activeTags.has(tag)));
+    chip.textContent = tag;
+    const number = document.createElement('b');
+    number.textContent = String(count);
+    chip.appendChild(number);
     chip.addEventListener('click', () => {
       if (state.activeTags.has(tag)) state.activeTags.delete(tag);
       else state.activeTags.add(tag);
       render();
     });
-    container.appendChild(chip);
+    chips.appendChild(chip);
+
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'tagrow';
+    row.setAttribute('aria-pressed', String(state.activeTags.has(tag)));
+    row.textContent = tag;
+    const badge = document.createElement('b');
+    badge.textContent = String(count);
+    row.appendChild(badge);
+    row.addEventListener('click', () => {
+      if (state.activeTags.has(tag)) state.activeTags.delete(tag);
+      else state.activeTags.add(tag);
+      render();
+    });
+    aside.appendChild(row);
   }
 }
 
@@ -598,7 +926,7 @@ function renderTrash() {
 function currentDraft() {
   return {
     title: el.titleInput.value,
-    content: el.editor.value,
+    content: el.editorArea.value,
     tags: el.noteTags.value,
   };
 }
@@ -615,7 +943,6 @@ function markClean() {
 
 function updateDirty() {
   state.dirty = snapshot() !== dirtySnapshot;
-  syncEditorChrome();
 }
 
 function syncEditorChrome() {
@@ -626,17 +953,20 @@ function syncEditorChrome() {
   el.editingBanner.hidden = !editing;
   if (editing) {
     el.editingTitle.textContent = displayTitle(editing);
+    el.composerHeading.textContent = displayTitle(editing);
+    el.composerKicker.textContent = 'Editing note';
     el.saveBtn.textContent = 'Update note';
   } else {
+    el.composerHeading.textContent = 'New note';
+    el.composerKicker.textContent = 'Compose';
     el.saveBtn.textContent = 'Save note';
   }
-
-  el.composerHeading.textContent = editing ? 'Editing note' : 'New note';
+  resetDeleteButton();
 }
 
 function fillEditor({ title = '', content = '', tags = [] }) {
   el.titleInput.value = title;
-  el.editor.value = content;
+  el.editorArea.value = content;
   el.noteTags.value = tags.join(', ');
   updateCounter();
   markClean();
@@ -645,15 +975,11 @@ function fillEditor({ title = '', content = '', tags = [] }) {
 function resetEditor() {
   state.editingId = null;
   fillEditor({});
-  el.composerOpen = true;
-  el.composerBody.hidden = false;
-  el.composerToggle.textContent = 'Collapse';
-  el.composerToggle.setAttribute('aria-expanded', 'true');
   syncEditorChrome();
 }
 
 function updateCounter() {
-  const length = el.editor.value.length;
+  const length = el.editorArea.value.length;
   el.charCount.textContent = `${length.toLocaleString()} / ${MAX_CONTENT.toLocaleString()}`;
   el.charCount.classList.toggle('warn', length > MAX_CONTENT * 0.9);
 }
@@ -668,8 +994,9 @@ function guardDraft(run) {
     run();
     return;
   }
-  notify('This draft has unsaved changes. Discard them?', {
+  notify('Discard this draft?', {
     sticky: true,
+    detail: 'It has unsaved changes.',
     actions: [
       { label: 'Discard', tone: 'danger', run: () => { markClean(); run(); } },
       { label: 'Keep writing' },
@@ -677,40 +1004,56 @@ function guardDraft(run) {
   });
 }
 
-function openNote(id) {
-  const note = state.notes.find((item) => item.id === id);
-  if (!note) return;
-  if (state.editingId === id) {
-    el.editor.focus();
-    return;
-  }
-  guardDraft(() => openNoteNow(note));
+function openEditor(trigger) {
+  state.returnFocus = trigger || document.activeElement;
+  if (!el.sheet.open) el.sheet.show();
+  requestAnimationFrame(() => {
+    el.titleInput.focus();
+    el.titleInput.select();
+  });
 }
 
-function openNoteNow(note) {
+function closeEditor({ force = false, restoreFocus = true } = {}) {
+  if (!el.sheet.open) return;
+  if (!force && state.dirty) {
+    guardDraft(() => closeEditor({ force: true }));
+    return;
+  }
+  el.sheet.close();
+  resetDeleteButton();
+  if (restoreFocus) {
+    const target = state.returnFocus;
+    state.returnFocus = null;
+    if (target && target.isConnected) target.focus();
+    else el.newNote.focus();
+  } else {
+    state.returnFocus = null;
+  }
+}
+
+function openNote(id, trigger) {
+  const note = state.notes.find((item) => item.id === id);
+  if (!note) return;
+  if (state.editingId === id && el.sheet.open) {
+    el.editorArea.focus();
+    return;
+  }
+  guardDraft(() => openNoteNow(note, trigger));
+}
+
+function openNoteNow(note, trigger) {
   state.editingId = note.id;
   fillEditor(note);
   syncEditorChrome();
   render();
-
-  el.composerBody.hidden = false;
-  state.composerOpen = true;
-  el.composerToggle.textContent = 'Collapse';
-  el.composerToggle.setAttribute('aria-expanded', 'true');
-
-  const target = el.titleInput.getBoundingClientRect();
-  if (target.top < 0) {
-    el.composerForm.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }
-  el.titleInput.focus();
-  el.titleInput.select();
+  openEditor(trigger);
 }
 
-function startNewDraft() {
+function startNewDraft(trigger) {
   guardDraft(() => {
     resetEditor();
     render();
-    el.titleInput.focus();
+    openEditor(trigger);
   });
 }
 
@@ -718,12 +1061,12 @@ async function saveNote() {
   if (state.busy) return;
 
   const title = el.titleInput.value.trim();
-  const content = el.editor.value.trim();
+  const content = el.editorArea.value.trim();
   const tags = parseTags(el.noteTags.value);
 
   if (!content) {
     notify('A note needs some text before it can be saved.', { tone: 'error' });
-    el.editor.focus();
+    el.editorArea.focus();
     return;
   }
   if (title.length > MAX_TITLE) {
@@ -735,6 +1078,8 @@ async function saveNote() {
   state.busy = true;
   el.saveBtn.disabled = true;
   el.saveBtn.textContent = 'Saving…';
+
+  const trigger = state.returnFocus;
 
   try {
     const editing = state.editingId
@@ -768,24 +1113,64 @@ async function saveNote() {
     state.etag = response.headers.get('ETag') || state.etag;
     applyBoard(data);
 
-    // Stay on the saved note so a second Ctrl+S does not create a duplicate.
-    const saved = state.notes.find((note) =>
-      editing ? note.id === editing.id : note.title === (title || '') || note.content === content
-    );
-    state.editingId = saved ? saved.id : null;
-    fillEditor(saved || { title, content, tags });
-    syncEditorChrome();
+    resetEditor();
     render();
+    closeEditor({ force: true, restoreFocus: false });
+    if (trigger && trigger.isConnected) trigger.focus();
+    else el.newNote.focus();
 
-    notify(editing ? 'Changes saved.' : 'Note saved.');
+    notify(editing ? 'Changes saved' : 'Note saved', {
+      detail: `${state.notes.length} note${state.notes.length === 1 ? '' : 's'} · just now`,
+    });
   } catch (err) {
-    notify(err.message || 'The note could not be saved', { tone: 'error' });
+    notify('The note could not be saved', { tone: 'error', detail: err.message || '' });
   } finally {
     state.busy = false;
     el.saveBtn.disabled = false;
     syncEditorChrome();
   }
 }
+
+/* ---------------------------------------------------------------- done state */
+
+async function toggleDone(id) {
+  const note = state.notes.find((item) => item.id === id);
+  if (!note) return;
+  const button = el.notesGrid.querySelector(`[data-id="${cssEscape(id)}"] .check`);
+  if (button) button.disabled = true;
+
+  try {
+    const response = await fetch(API.notes, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, version: note.version, done: !note.done }),
+    });
+
+    if (response.status === 401) {
+      showGate();
+      throw new Error('Your session expired.');
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 409) throw new Error('This note changed somewhere else. Reload the board.');
+    if (!response.ok) throw new Error(data.error || 'The note could not be updated');
+
+    state.etag = response.headers.get('ETag') || state.etag;
+    applyBoard(data);
+    // The row is rebuilt, so put the keyboard back where it was.
+    const restored = el.notesGrid.querySelector(`[data-id="${cssEscape(id)}"] .check`);
+    if (restored) restored.focus();
+  } catch (err) {
+    notify('The note could not be updated', { tone: 'error', detail: err.message || '' });
+    if (button && button.isConnected) button.disabled = false;
+  }
+}
+
+function cssEscape(value) {
+  return window.CSS && CSS.escape ? CSS.escape(value) : String(value).replace(/"/g, '\\"');
+}
+
+/* -------------------------------------------------------------------- trash */
 
 async function deleteNote(id) {
   const note = state.notes.find((item) => item.id === id);
@@ -807,28 +1192,49 @@ async function deleteNote(id) {
     if (!response.ok) throw new Error(data.error || 'The note could not be deleted');
 
     state.etag = response.headers.get('ETag') || state.etag;
-    if (state.editingId === id) resetEditor();
+    if (state.editingId === id) {
+      resetEditor();
+      closeEditor({ force: true });
+    }
     applyBoard(data);
 
-    notify('Moved to the trash.', {
-      duration: 8000,
+    notify('Moved to trash', {
+      detail: 'Restore it for 30 days.',
       action: { label: 'Undo', run: () => restoreNote(id) },
     });
   } catch (err) {
-    notify(err.message || 'The note could not be deleted', { tone: 'error' });
+    notify('The note could not be deleted', { tone: 'error', detail: err.message || '' });
   }
 }
 
-function confirmTrash(id) {
-  const note = state.notes.find((item) => item.id === id);
-  if (!note) return;
-  notify(`Move “${displayTitle(note)}” to the trash?`, {
-    sticky: true,
-    actions: [
-      { label: 'Move to trash', tone: 'danger', run: () => deleteNote(note.id) },
-      { label: 'Keep' },
-    ],
-  });
+/**
+ * In-place confirmation: the button becomes "Confirm?" for four seconds, then
+ * reverts. No dialog, so a stray Enter on a focused OK button cannot delete.
+ */
+function resetDeleteButton() {
+  if (state.deleteTimer) {
+    clearTimeout(state.deleteTimer);
+    state.deleteTimer = null;
+  }
+  state.deleteArmed = false;
+  if (!el.deleteBtn) return;
+  el.deleteBtn.textContent = 'Move to trash';
+  el.deleteBtn.classList.remove('armed');
+  el.deleteBtn.setAttribute('aria-label', 'Move this note to trash');
+}
+
+function armDelete() {
+  if (!state.editingId) return;
+  if (state.deleteArmed) {
+    resetDeleteButton();
+    deleteNote(state.editingId);
+    return;
+  }
+  state.deleteArmed = true;
+  el.deleteBtn.textContent = 'Confirm?';
+  el.deleteBtn.classList.add('armed');
+  el.deleteBtn.setAttribute('aria-label', 'Confirm moving this note to trash');
+  state.deleteTimer = setTimeout(resetDeleteButton, 4000);
 }
 
 async function restoreNote(id) {
@@ -843,9 +1249,9 @@ async function restoreNote(id) {
 
     state.etag = response.headers.get('ETag') || state.etag;
     applyBoard(data);
-    notify('Note restored.');
+    notify('Note restored');
   } catch (err) {
-    notify(err.message || 'The note could not be restored', { tone: 'error' });
+    notify('The note could not be restored', { tone: 'error', detail: err.message || '' });
   }
 }
 
@@ -873,7 +1279,7 @@ function exportNotes() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  notify(`Exported ${state.notes.length} notes as Markdown.`);
+  notify(`Exported ${state.notes.length} notes as Markdown`);
 }
 
 /* ------------------------------------------------------------------- events */
@@ -881,17 +1287,18 @@ function exportNotes() {
 function bindEvents() {
   el.gateForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (el.gateSubmit.disabled) return;
+
     const value = el.gatePassphrase.value;
     if (!value) {
-      el.gateError.textContent = 'Enter your PIN or passphrase.';
-      el.gateError.hidden = false;
-      el.gatePassphrase.focus();
+      showGateError('Enter your PIN or passphrase.');
+      focusGateInput();
       return;
     }
 
     el.gateSubmit.disabled = true;
     el.gateSubmit.textContent = 'Unlocking…';
-    el.gateError.hidden = true;
+    clearGateError();
 
     try {
       await unlock(value);
@@ -899,17 +1306,49 @@ function bindEvents() {
       showBoard();
       await loadBoard();
     } catch (err) {
-      el.gateError.textContent = err.message || 'Could not unlock the board';
-      el.gateError.hidden = false;
-      el.gatePassphrase.select();
+      const base = err.message || 'Could not unlock the board';
+      const wait = err.status === 429 && err.retryAfter > 0
+        ? ` Try again in ${err.retryAfter}s.`
+        : '';
+      showGateError(wait ? `${base}${wait}` : base, { shake: true });
+      if (err.status === 401) el.gatePassphrase.value = '';
+      updatePinProgress();
+      buildPinCells();
+      focusGateInput();
     } finally {
       el.gateSubmit.disabled = false;
       el.gateSubmit.textContent = 'Unlock board';
     }
   });
 
-  el.lockBtn.addEventListener('click', lock);
+  // Cells repaint from the real input, so paste, arrows and backspace keep the
+  // browser's own behaviour instead of being re-implemented.
+  el.gatePassphrase.addEventListener('input', () => {
+    updatePinProgress();
+    if (usesCells()) buildPinCells();
+    if (!el.gateError.hidden) clearGateError();
 
+    if (
+      state.credentialKind === 'pin' &&
+      state.pinLength &&
+      el.gatePassphrase.value.length === state.pinLength &&
+      !el.gateSubmit.disabled
+    ) {
+      el.gateForm.requestSubmit();
+    }
+  });
+
+  el.gatePassphrase.addEventListener('focus', () => {
+    if (usesCells()) buildPinCells();
+    el.pinWrap.classList.add('is-focus');
+  });
+  el.gatePassphrase.addEventListener('blur', () => el.pinWrap.classList.remove('is-focus'));
+
+  el.pinWrap.addEventListener('click', (event) => {
+    if (event.target !== el.gatePassphrase) focusGateInput();
+  });
+
+  el.lockBtn.addEventListener('click', lock);
   el.gateChangeToggle.addEventListener('click', () => showChangeForm(true));
   el.kindPin.addEventListener('change', () => useKind('pin'));
   el.kindPassphrase.addEventListener('change', () => useKind('passphrase'));
@@ -924,30 +1363,16 @@ function bindEvents() {
     saveNote();
   });
 
-  el.newBtn.addEventListener('click', startNewDraft);
-  el.cancelEdit.addEventListener('click', () => {
-    guardDraft(() => {
-      resetEditor();
-      render();
-    });
-  });
-  el.deleteBtn.addEventListener('click', () => {
-    if (state.editingId) confirmTrash(state.editingId);
-  });
+  el.newNote.addEventListener('click', () => startNewDraft(el.newNote));
+  el.fab.addEventListener('click', () => startNewDraft(el.fab));
+  el.composerClose.addEventListener('click', () => closeEditor());
+  el.deleteBtn.addEventListener('click', armDelete);
+  el.sheet.addEventListener('close', resetDeleteButton);
 
-  el.composerToggle.addEventListener('click', () => {
-    state.composerOpen = !state.composerOpen;
-    el.composerBody.hidden = !state.composerOpen;
-    el.composerToggle.textContent = state.composerOpen ? 'Collapse' : 'Expand';
-    el.composerToggle.setAttribute('aria-expanded', String(state.composerOpen));
-  });
-
-  el.editor.addEventListener('input', () => {
+  el.editorArea.addEventListener('input', () => {
     updateCounter();
     updateDirty();
   });
-  el.titleInput.addEventListener('input', updateDirty);
-  el.noteTags.addEventListener('input', updateDirty);
 
   el.search.addEventListener('input', () => {
     state.filter = el.search.value;
@@ -966,22 +1391,43 @@ function bindEvents() {
 
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
-      if (!el.app.hidden) saveNote();
+      if (el.sheet.open) saveNote();
       return;
     }
 
-    if (event.key === '/' && !typing && !el.app.hidden) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && el.sheet.open) {
+      event.preventDefault();
+      saveNote();
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      if (el.sheet.open) {
+        event.preventDefault();
+        closeEditor();
+        return;
+      }
+      if (document.activeElement === el.search) {
+        el.search.value = '';
+        state.filter = '';
+        render();
+        el.search.blur();
+      }
+      return;
+    }
+
+    if (typing || !el.gate.hidden) return;
+
+    if (event.key === '/') {
       event.preventDefault();
       el.search.focus();
       el.search.select();
       return;
     }
 
-    if (event.key === 'Escape' && document.activeElement === el.search) {
-      el.search.value = '';
-      state.filter = '';
-      render();
-      el.search.blur();
+    if (event.key.toLowerCase() === 'n' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      startNewDraft(el.newNote);
     }
   });
 
@@ -1010,11 +1456,15 @@ function cacheElements() {
   el.gate = $('gate');
   el.gateForm = $('gate-form');
   el.gatePassphrase = $('gate-passphrase');
+  el.gateHeading = $('gate-heading');
   el.gateLabel = $('gate-label');
   el.gateLede = $('gate-lede');
+  el.gateProgress = $('gate-progress');
   el.gateSubmit = $('gate-submit');
   el.gateError = $('gate-error');
   el.gateChangeToggle = $('gate-change-toggle');
+  el.pinWrap = $('pin-wrap');
+  el.pinCells = $('pin-cells');
 
   el.changeForm = $('change-form');
   el.changeCurrent = $('change-current');
@@ -1032,20 +1482,21 @@ function cacheElements() {
   el.app = $('app');
   el.statusLine = $('status-line');
   el.lockBtn = $('lock-btn');
+  el.fab = $('fab');
+  el.newNote = $('new-note');
 
+  el.sheet = $('editor');
   el.composerForm = $('composer-form');
-  el.composerBody = $('composer-body');
-  el.composerToggle = $('composer-toggle');
   el.composerHeading = $('composer-heading');
+  el.composerKicker = $('composer-kicker');
+  el.composerClose = $('composer-close');
   el.titleInput = $('note-title');
-  el.editor = $('note-editor');
+  el.editorArea = $('note-editor');
   el.noteTags = $('note-tags');
   el.charCount = $('char-count');
   el.saveBtn = $('save-btn');
-  el.newBtn = $('new-btn');
   el.editingBanner = $('editing-banner');
   el.editingTitle = $('editing-title');
-  el.cancelEdit = $('cancel-edit');
   el.deleteBtn = $('delete-btn');
 
   el.notesCount = $('notes-count');
@@ -1057,6 +1508,7 @@ function cacheElements() {
   el.sort = $('sort');
   el.exportBtn = $('export-btn');
   el.tagFilter = $('tag-filter');
+  el.tagAside = $('tag-aside');
 
   el.trash = $('trash');
   el.trashCount = $('trash-count');
@@ -1067,6 +1519,11 @@ function cacheElements() {
 
 async function init() {
   cacheElements();
+  toastQueue = ToastQueue.createToastQueue({
+    duration: TOAST_MS,
+    show: (toast) => renderToast(toast),
+    clear: () => el.toastRegion.replaceChildren(),
+  });
   bindEvents();
   updateCounter();
   markClean();
@@ -1083,8 +1540,7 @@ async function init() {
       return;
     }
     if (data.configured === false) {
-      el.gateError.textContent = 'This board has no PIN or passphrase configured yet.';
-      el.gateError.hidden = false;
+      showGateError('This board has no PIN or passphrase configured yet.');
     }
   } catch {
     /* Fall through to the gate; the unlock attempt will surface the error. */
