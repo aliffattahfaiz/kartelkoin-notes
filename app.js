@@ -632,13 +632,42 @@ function buildRow(note) {
 
   item.appendChild(main);
 
+  const end = document.createElement('div');
+  end.className = 'row-end';
+
   const status = document.createElement('div');
   status.className = 'row-status';
   if (note.id === state.editingId) status.textContent = 'Editing';
   else if (note.done) status.textContent = 'Done';
   else if (note.pinned) status.textContent = 'Pinned';
   else status.textContent = 'Open';
-  item.appendChild(status);
+  end.appendChild(status);
+
+  // Two actions, one click away, without opening the note. Copy stays
+  // reversible and silent in the board; delete is a soft delete that offers
+  // Undo, so neither can lose work.
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
+
+  const copy = iconButton({
+    label: `Copy “${displayTitle(note)}”`,
+    hint: 'Copy',
+    icon: 'copy',
+    onClick: () => copyNote(note),
+  });
+  actions.appendChild(copy);
+
+  const remove = iconButton({
+    label: `Move “${displayTitle(note)}” to trash`,
+    hint: 'Move to trash',
+    icon: 'trash',
+    onClick: (button) => armRowDelete(note, button),
+  });
+  remove.classList.add('danger');
+  actions.appendChild(remove);
+
+  end.appendChild(actions);
+  item.appendChild(end);
 
   item.addEventListener('click', (event) => {
     if (event.target.closest('button')) return;
@@ -646,6 +675,108 @@ function buildRow(note) {
   });
 
   return item;
+}
+
+const ICONS = {
+  copy: 'M8 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Zm0 0V6a2 2 0 0 1 2-2h8',
+  trash: 'M4 7h16M9 7V5h6v2m-8 0 1 13h8l1-13M10 11v6M14 11v6',
+  check: 'M5 12l5 5 9-11',
+};
+
+function iconButton({ label, hint, icon, onClick }) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'row-action';
+  button.setAttribute('aria-label', label);
+  button.title = hint;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', ICONS[icon]);
+  svg.appendChild(path);
+  button.appendChild(svg);
+
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onClick(button);
+  });
+
+  return button;
+}
+
+/** Title and body, or just the body when the title was derived from it. */
+function noteText(note) {
+  const body = String(note.content || '');
+  if (!note.title) return body.trim();
+  return `${note.title}\n\n${body.trim()}`.trim();
+}
+
+async function copyNote(note) {
+  const text = noteText(note);
+  if (!text) {
+    notify('This note is empty, so there is nothing to copy.', { tone: 'error' });
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Older browsers and non-secure contexts have no clipboard API.
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.top = '-1000px';
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand('copy');
+    area.remove();
+    if (!copied) {
+      notify('The note could not be copied', {
+        tone: 'error',
+        detail: 'Your browser blocked clipboard access.',
+      });
+      return;
+    }
+  }
+
+  notify('Copied to clipboard', { detail: displayTitle(note) });
+}
+
+/**
+ * Row delete confirms in place: the icon becomes a check for four seconds, then
+ * reverts. Escape or a second click elsewhere is not needed — letting it time
+ * out is the safe default.
+ */
+function armRowDelete(note, button) {
+  if (button.dataset.armed === 'true') {
+    clearTimeout(Number(button.dataset.timer) || 0);
+    delete button.dataset.armed;
+    button.classList.remove('armed');
+    button.title = 'Move to trash';
+    button.setAttribute('aria-label', `Move “${displayTitle(note)}” to trash`);
+    button.querySelector('path').setAttribute('d', ICONS.trash);
+    deleteNote(note.id);
+    return;
+  }
+
+  button.dataset.armed = 'true';
+  button.classList.add('armed');
+  button.title = 'Confirm delete';
+  button.setAttribute('aria-label', `Confirm deleting “${displayTitle(note)}”`);
+  button.querySelector('path').setAttribute('d', ICONS.check);
+
+  const timer = setTimeout(() => {
+    if (!button.isConnected) return;
+    delete button.dataset.armed;
+    button.classList.remove('armed');
+    button.title = 'Move to trash';
+    button.setAttribute('aria-label', `Move “${displayTitle(note)}” to trash`);
+    button.querySelector('path').setAttribute('d', ICONS.trash);
+  }, 4000);
+  button.dataset.timer = String(timer);
 }
 
 function render() {
